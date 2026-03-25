@@ -83,6 +83,38 @@ def de_scrub_text(text: str, mapping: dict) -> str:
         text = text.replace(placeholder, original_value)
     return text
 
+from fastapi.responses import StreamingResponse
+
+async def de_scrub_stream(response_iterator, mapping: dict):
+    """
+    Generator that de-scrubs a stream of chunks.
+    Maintains a buffer for potentially split placeholders (e.g., "<PRIVATE").
+    """
+    buffer = ""
+    async for chunk in response_iterator:
+        # 1. Combine buffer with new chunk (it comes as bytes, decode to string)
+        text = buffer + chunk.decode("utf-8", errors="replace")
+        buffer = ""
+
+        # 2. Check for a trailing partial placeholder (starts with '<' but no '>')
+        # We find the last '<' and see if it has a closing '>' after it.
+        last_open_bracket = text.rfind("<")
+        last_close_bracket = text.rfind(">")
+
+        if last_open_bracket > last_close_bracket:
+            # There is an unmatched '<' at the end
+            # We buffer from that point onwards
+            buffer = text[last_open_bracket:]
+            text = text[:last_open_bracket]
+
+        # 3. De-scrub the solid part of the text
+        if text:
+            yield de_scrub_text(text, mapping).encode("utf-8")
+
+    # 4. Flush remaining buffer if any
+    if buffer:
+        yield de_scrub_text(buffer, mapping).encode("utf-8")
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_engine(request: Request, path: str):
     # 1. Capture the original request
@@ -112,56 +144,38 @@ async def proxy_engine(request: Request, path: str):
         except Exception as e:
             print(f"[Error] Failed to parse/scrub body: {e}")
 
-    # 3. Forward to Google
-    async with httpx.AsyncClient() as client:
-        # Remove host header to avoid SSL/Routing mismatches
-        headers.pop("host", None)
-        
-        url = f"{TARGET_URL}/{path}"
-        response = await client.request(
-            method=request.method,
-            url=url,
-            content=body,
-            headers=headers,
-            params=request.query_params,
-            timeout=60.0
+    # 3. Forward to Target
+    client = httpx.AsyncClient()
+    # Remove host header to avoid SSL/Routing mismatches
+    headers.pop("host", None)
+    
+    url = f"{TARGET_URL}/{path}"
+    
+    # We use a stream request to support both normal and streaming responses
+    req = client.build_request(
+        method=request.method,
+        url=url,
+        content=body,
+        headers=headers,
+        params=request.query_params,
+        timeout=60.0
+    )
+    
+    response = await client.send(req, stream=True)
+
+    # 4. Handle Response
+    if pii_mapping and response.status_code == 200:
+        # Wrap the response stream with our de-scrubber
+        return StreamingResponse(
+            de_scrub_stream(response.aiter_bytes(), pii_mapping),
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            background=None # Don't close client automatically if streaming
         )
 
-    # 4. Intercept Response and De-Scrub
-    response_content = response.content
-    
-    if pii_mapping and response.status_code == 200:
-        try:
-            # Check if response is JSON (common for API responses)
-            if "application/json" in response.headers.get("Content-Type", ""):
-                resp_json = response.json()
-                
-                # Recursively de-scrub JSON values
-                def process_json(obj):
-                    if isinstance(obj, str):
-                        return de_scrub_text(obj, pii_mapping)
-                    elif isinstance(obj, list):
-                        return [process_json(item) for item in obj]
-                    elif isinstance(obj, dict):
-                        return {k: process_json(v) for k, v in obj.items()}
-                    return obj
-                
-                resp_json = process_json(resp_json)
-                response_content = json.dumps(resp_json).encode("utf-8")
-                
-                # Update headers for the new content length
-                new_headers = dict(response.headers)
-                new_headers["Content-Length"] = str(len(response_content))
-                return Response(
-                    content=response_content,
-                    status_code=response.status_code,
-                    headers=new_headers
-                )
-        except Exception as e:
-            print(f"[Error] Failed to de-scrub response: {e}")
-
-    return Response(
-        content=response_content,
+    # If no mapping or error, just proxy the stream as-is
+    return StreamingResponse(
+        response.aiter_bytes(),
         status_code=response.status_code,
         headers=dict(response.headers)
     )
