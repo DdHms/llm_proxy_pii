@@ -13,6 +13,7 @@ A privacy-preserving proxy for LLMs (Local and Remote) that automatically identi
     - `semantic`: PII is replaced with descriptive placeholders (e.g., `<PERSON_N>`, `<IP_ADDRESS_N>`).
 - **Custom Exclusions**: Explicitly redact specific strings (e.g., internal service names, cluster IDs) by passing them at build time.
 - **Response De-anonymization**: Automatically restores original PII in the model's response before returning it to the client.
+- **Streaming Support**: Handles chunked/streaming responses (SSE) with a buffering mechanism to prevent de-scrubbing failures on split placeholders.
 - **Configurable Backend**: Works with Gemini Internal APIs by default but can be configured for any endpoint.
 
 ## How It Works
@@ -62,7 +63,7 @@ The proxy will be available at `http://localhost:8080`.
 ## TODO List
 
 - [ ] **OpenAI/Local LLM Support**: Add handlers for `/v1/chat/completions` to support OpenAI, Ollama, vLLM, and other standard APIs.
-- [ ] **Streaming Support**: Implement logic to handle chunked/streaming responses (SSE) and de-anonymize data on-the-fly.
+- [x] **Streaming Support**: Implement logic to handle chunked/streaming responses (SSE) and de-anonymize data on-the-fly.
 - [ ] **Conversation Persistence**: Maintain PII mappings across multiple turns of a conversation for consistent redaction/restoration.
 - [ ] **Custom Entity Support**: Allow users to define custom regex or logic for specific sensitive data types.
 - [ ] **Comprehensive Testing**: Create a suite of tests to verify PII handling across different edge cases.
