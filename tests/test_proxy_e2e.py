@@ -15,6 +15,10 @@ client = TestClient(app)
 
 @pytest.mark.asyncio
 async def test_proxy_scrubs_prompt_and_restores_response():
+    # Set to semantic mode for this test to match mock labels
+    import proxy
+    proxy.SCRUBBING_MODE = "semantic"
+    
     # Mock data
     prompt_with_pii = {
         "request": {
@@ -27,7 +31,7 @@ async def test_proxy_scrubs_prompt_and_restores_response():
     }
     
     # Expected scrubbed response from "Gemini"
-    # Note: Presidio detects names as PERSON
+    # Presidio uses PERSON and we use IP_ADDRESS
     mock_gemini_response = {
         "candidates": [
             {
@@ -45,11 +49,13 @@ async def test_proxy_scrubs_prompt_and_restores_response():
         mock_response.status_code = 200
         mock_response.headers = {"Content-Type": "application/json"}
         
-        # Generator for streaming response simulation
+        # Define an async generator function to simulate the stream
         async def mock_stream_iterator():
             yield json.dumps(mock_gemini_response).encode("utf-8")
             
-        mock_response.aiter_bytes.return_value = mock_stream_iterator()
+        # Use MagicMock for aiter_bytes to return the generator directly
+        from unittest.mock import MagicMock
+        mock_response.aiter_bytes = MagicMock(return_value=mock_stream_iterator())
         mock_send.return_value = mock_response
 
         # Call the proxy endpoint

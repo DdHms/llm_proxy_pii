@@ -62,9 +62,11 @@ A privacy-preserving proxy for LLMs (Local and Remote) that automatically identi
 
 You can run the unit and E2E tests using `pytest`:
 
-1.  **Install dependencies locally**:
+1.  **Set up the virtual environment**:
     ```bash
-    pip install pytest pytest-asyncio fastapi httpx presidio-analyzer presidio-anonymizer spacy
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
     python -m spacy download en_core_web_lg
     ```
 
