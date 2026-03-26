@@ -29,6 +29,7 @@ A privacy-preserving proxy for LLMs (Local and Remote) that automatically identi
 | Build Arg / Env Var | Default | Description |
 |---------------------|---------|-------------|
 | `SCRUBBING_MODE`    | `generic` | `generic` or `semantic` labels. |
+| `ANALYZER_TYPE`     | `both`    | `presidio`, `pattern`, or `both`. |
 | `DEFAULT_EXCLUSIONS`| `""`      | Comma-separated list of strings to always redact. |
 | `TARGET_URL`        | `https://cloudcode-pa.googleapis.com` | The destination LLM API. |
 
@@ -40,16 +41,17 @@ A privacy-preserving proxy for LLMs (Local and Remote) that automatically identi
 
 ### Building and Running
 
-1.  **Build with default settings (Generic Mode)**:
+1.  **Build with default settings (Both Analyzers, Generic Mode)**:
     ```bash
     docker build -t llm-proxy-pii .
     ```
 
-2.  **Build with Semantic Mode and Custom Exclusions**:
+2.  **Build with Pattern-only Analyzer and Semantic Mode**:
     ```bash
     docker build \
+      --build-arg ANALYZER_TYPE="pattern" \
       --build-arg SCRUBBING_MODE="semantic" \
-      --build-arg DEFAULT_EXCLUSIONS="dev-db-cluster-01,super-secret-service" \
+      --build-arg DEFAULT_EXCLUSIONS="dev-db-cluster-01" \
       -t llm-proxy-pii .
     ```
 
@@ -58,7 +60,22 @@ A privacy-preserving proxy for LLMs (Local and Remote) that automatically identi
     docker run -p 8080:8080 -e TARGET_URL="https://api.openai.com" llm-proxy-pii
     ```
 
-The proxy will be available at `http://localhost:8080`.
+### Running Tests
+
+You can run the unit and E2E tests using `pytest`:
+
+1.  **Set up the virtual environment**:
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    python -m spacy download en_core_web_lg
+    ```
+
+2.  **Run the tests**:
+    ```bash
+    pytest
+    ```
 
 ## TODO List
 
@@ -66,4 +83,4 @@ The proxy will be available at `http://localhost:8080`.
 - [x] **Streaming Support**: Implement logic to handle chunked/streaming responses (SSE) and de-anonymize data on-the-fly.
 - [ ] **Conversation Persistence**: Maintain PII mappings across multiple turns of a conversation for consistent redaction/restoration.
 - [ ] **Custom Entity Support**: Allow users to define custom regex or logic for specific sensitive data types.
-- [ ] **Comprehensive Testing**: Create a suite of tests to verify PII handling across different edge cases.
+- [x] **Comprehensive Testing**: Create a suite of tests to verify PII handling across different edge cases.
