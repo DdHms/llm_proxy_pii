@@ -38,44 +38,17 @@ def get_analyzer():
 async def scrub_text(text: str):
     """
     Uses Presidio and custom regex/exclusion logic to redact PII.
-    Supports 'semantic' and 'generic' modes.
-    Supports 'presidio', 'pattern', and 'both' analyzer types.
+    Processes DEFAULT_EXCLUSIONS first, then other analyzers sequentially.
     """
     mapping = {}
     scrubbed_text = text
-    
-    potential_matches = []
-
-    # Presidio PII Detection (Names, Emails, etc.)
-    if ANALYZER_TYPE in ["presidio", "both"]:
-        az = get_analyzer()
-        if az:
-            results = az.analyze(text=text, language='en')
-            for res in results:
-                potential_matches.append((text[res.start:res.end], res.entity_type))
-
-    # Pattern Detection (IPs, Gibberish, Exclusions)
-    if ANALYZER_TYPE in ["pattern", "both"]:
-        ips = re.findall(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', text)
-        for ip in ips:
-            potential_matches.append((ip, "IP_ADDRESS"))
-
-        potential_gibberish = re.findall(r'\b(?=[a-zA-Z]*\d)(?=\d*[a-zA-Z])[a-zA-Z0-9]{6,}\b', text)
-        for g in potential_gibberish:
-            potential_matches.append((g, "PRIVATE_KEY"))
-
-        for excluded in DEFAULT_EXCLUSIONS:
-            if excluded in text:
-                potential_matches.append((excluded, "PRIVATE_DATA"))
-
-    potential_matches.sort(key=lambda x: len(x[0]), reverse=True)
-
     counts = {}
     seen_texts = {} 
 
-    for secret, label in potential_matches:
+    def apply_replacement(target_text, secret, label):
+        nonlocal scrubbed_text
         if not secret or secret in seen_texts:
-            continue
+            return scrubbed_text
             
         if SCRUBBING_MODE == "semantic":
             counts[label] = counts.get(label, 0) + 1
@@ -86,7 +59,41 @@ async def scrub_text(text: str):
             
         mapping[placeholder] = secret
         seen_texts[secret] = placeholder
-        scrubbed_text = scrubbed_text.replace(secret, placeholder)
+        return scrubbed_text.replace(secret, placeholder)
+
+    # 1. ALWAYS process Custom Exclusions FIRST
+    # Sort exclusions by length descending to handle overlapping terms
+    sorted_exclusions = sorted(DEFAULT_EXCLUSIONS, key=len, reverse=True)
+    for excluded in sorted_exclusions:
+        if excluded in scrubbed_text:
+            scrubbed_text = apply_replacement(scrubbed_text, excluded, "EXCLUSION")
+
+    # 2. Collect potential matches from subsequent analyzers using the CURRENT scrubbed_text
+    potential_matches = []
+
+    # Presidio PII Detection
+    if ANALYZER_TYPE in ["presidio", "both"]:
+        az = get_analyzer()
+        if az:
+            # Note: We analyze the ALREADY scrubbed text
+            results = az.analyze(text=scrubbed_text, language='en')
+            for res in results:
+                potential_matches.append((scrubbed_text[res.start:res.end], res.entity_type))
+
+    # Pattern Detection
+    if ANALYZER_TYPE in ["pattern", "both"]:
+        ips = re.findall(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', scrubbed_text)
+        for ip in ips:
+            potential_matches.append((ip, "IP_ADDRESS"))
+
+        potential_gibberish = re.findall(r'\b(?=[a-zA-Z]*\d)(?=\d*[a-zA-Z])[a-zA-Z0-9]{6,}\b', scrubbed_text)
+        for g in potential_gibberish:
+            potential_matches.append((g, "PRIVATE_KEY"))
+
+    # 3. Sort and Apply subsequent matches
+    potential_matches.sort(key=lambda x: len(x[0]), reverse=True)
+    for secret, label in potential_matches:
+        scrubbed_text = apply_replacement(scrubbed_text, secret, label)
         
     return scrubbed_text, mapping
 
