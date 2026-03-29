@@ -55,34 +55,60 @@ To use this proxy with the Gemini CLI, set the following environment variable in
 export CODE_ASSIST_ENDPOINT="http://localhost:8080"
 ```
 
-## Setup & Run
+## Installation
 
-### Prerequisites
+### Option 1: Docker (Containerized)
 
-- Docker installed on your system.
+Recommended for quick setup and isolated environments.
 
-### Building and Running
+**Prerequisites:**
+- Docker installed.
 
-1.  **Build with default settings**:
-    ```bash
-    docker build -t llm-proxy-pii .
-    ```
+**Building and Running:**
+1. **Build the image**:
+   ```bash
+   docker build -t llm-proxy-pii .
+   ```
+2. **Run the container**:
+   ```bash
+   docker run -p 8080:8080 llm-proxy-pii
+   ```
+3. **Run with Custom Config**:
+   ```bash
+   docker run -p 8080:8080 \
+     -e DEBUG=true \
+     -e TARGET_URL="https://generativelanguage.googleapis.com" \
+     llm-proxy-pii
+   ```
 
-2.  **Run the container**:
-    ```bash
-    docker run -p 8080:8080 llm-proxy-pii
-    ```
+### Option 2: Native Node.js Addon (Rust + Python Bridge)
 
-3.  **Run with Debugging and Custom Target**:
-    ```bash
-    docker run -p 8080:8080 \
-      -e DEBUG=true \
-      -e TARGET_URL="https://generativelanguage.googleapis.com" \
-      llm-proxy-pii
-    ```
+Recommended for developers who want a native GUI experience and seamless Node.js integration.
+
+**Prerequisites:**
+- Node.js (v16+)
+- Rust & Cargo
+- Python 3.10+
+
+**Building and Running:**
+1. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+   *Note: This will also run `pip install -r requirements.txt` automatically.*
+
+2. **Build the native bridge**:
+   ```bash
+   npm run build
+   ```
+
+3. **Start the proxy and GUI**:
+   ```bash
+   npm start
+   ```
 
 The proxy will be available at `http://localhost:8080`.
-The dashboard will be available at `http://localhost:8080/dashboard`.
+A native desktop window will open automatically showing the Privacy Shield Dashboard.
 
 ## Development & Testing
 
