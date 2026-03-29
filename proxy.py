@@ -3,12 +3,12 @@ import json
 import re
 import os
 import uuid
+import time
 from datetime import datetime
 from collections import deque
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse, HTMLResponse
 from presidio_analyzer import AnalyzerEngine
-from presidio_anonymizer import AnonymizerEngine
 
 app = FastAPI()
 
@@ -20,9 +20,17 @@ DEFAULT_EXCLUSIONS = os.getenv("DEFAULT_EXCLUSIONS", "").split(",")
 DEFAULT_EXCLUSIONS = [ex.strip() for ex in DEFAULT_EXCLUSIONS if ex.strip()]
 SCRUBBING_MODE = os.getenv("SCRUBBING_MODE", "generic").lower()
 ANALYZER_TYPE = os.getenv("ANALYZER_TYPE", "both").lower()
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 # The target LLM provider endpoint
 TARGET_URL = os.getenv("TARGET_URL", "https://cloudcode-pa.googleapis.com")
+
+def log_debug(msg):
+    if DEBUG:
+        print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] [DEBUG] {msg}")
+
+# Initialize global client for reuse
+async_client = httpx.AsyncClient(timeout=60.0)
 
 analyzer = None
 
@@ -61,21 +69,19 @@ async def scrub_text(text: str):
         seen_texts[secret] = placeholder
         return scrubbed_text.replace(secret, placeholder)
 
-    # 1. ALWAYS process Custom Exclusions FIRST
-    # Sort exclusions by length descending to handle overlapping terms
+    # 1. process Custom Exclusions FIRST
     sorted_exclusions = sorted(DEFAULT_EXCLUSIONS, key=len, reverse=True)
     for excluded in sorted_exclusions:
         if excluded in scrubbed_text:
             scrubbed_text = apply_replacement(scrubbed_text, excluded, "EXCLUSION")
 
-    # 2. Collect potential matches from subsequent analyzers using the CURRENT scrubbed_text
+    # 2. Collect potential matches from subsequent analyzers
     potential_matches = []
 
     # Presidio PII Detection
     if ANALYZER_TYPE in ["presidio", "both"]:
         az = get_analyzer()
         if az:
-            # Note: We analyze the ALREADY scrubbed text
             results = az.analyze(text=scrubbed_text, language='en')
             for res in results:
                 potential_matches.append((scrubbed_text[res.start:res.end], res.entity_type))
@@ -90,7 +96,6 @@ async def scrub_text(text: str):
         for g in potential_gibberish:
             potential_matches.append((g, "PRIVATE_KEY"))
 
-    # 3. Sort and Apply subsequent matches
     potential_matches.sort(key=lambda x: len(x[0]), reverse=True)
     for secret, label in potential_matches:
         scrubbed_text = apply_replacement(scrubbed_text, secret, label)
@@ -138,6 +143,10 @@ async def de_scrub_stream(response_iterator, mapping: dict, log_entry: dict = No
     if log_entry is not None:
         log_entry["resp_before"] = "".join(full_resp_before)
         log_entry["resp_after"] = "".join(full_resp_after)
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "analyzer": ANALYZER_TYPE, "mode": SCRUBBING_MODE}
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
@@ -217,8 +226,22 @@ async def get_logs():
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_engine(request: Request, path: str):
+    start_time = time.perf_counter()
+    log_debug(f"New Request: {request.method} /{path}")
+    
     body = await request.body()
+    log_debug(f"Captured Body (Size: {len(body)} bytes)")
+    
     headers = dict(request.headers)
+    
+    # Critical Fix: Remove Content-Length and Transfer-Encoding from request headers
+    # to let httpx handle it correctly for the modified body
+    headers.pop("content-length", None)
+    headers.pop("Content-Length", None)
+    headers.pop("transfer-encoding", None)
+    headers.pop("Transfer-Encoding", None)
+    headers.pop("host", None)
+    headers.pop("Host", None)
     
     pii_mapping = {}
     log_entry = {
@@ -232,11 +255,23 @@ async def proxy_engine(request: Request, path: str):
         "resp_after": ""
     }
     
-    if request.method == "POST" and "v1internal" in path:
+    # Trigger scrubbing for Gemini Internal and Public APIs
+    is_gemini_path = "v1internal" in path or "v1/models" in path or "v1beta/models" in path
+    
+    if request.method == "POST" and is_gemini_path:
         try:
             data = json.loads(body)
+            # Support both internal and public JSON structures
+            contents = None
             if "request" in data and "contents" in data["request"]:
-                for content in data["request"]["contents"]:
+                contents = data["request"]["contents"]
+            elif "contents" in data:
+                contents = data["contents"]
+                
+            if contents:
+                log_debug("Starting PII Scrubbing...")
+                scrub_start = time.perf_counter()
+                for content in contents:
                     for part in content.get("parts", []):
                         if "text" in part:
                             original_text = part["text"]
@@ -245,33 +280,46 @@ async def proxy_engine(request: Request, path: str):
                             part["text"] = scrubbed_text
                             log_entry["req_after"] = scrubbed_text
                             pii_mapping.update(mapping)
+                log_debug(f"Scrubbing finished in {time.perf_counter() - scrub_start:.4f}s")
             
             body = json.dumps(data).encode("utf-8")
-            headers["Content-Length"] = str(len(body))
         except Exception as e:
             print(f"[Error] Failed to parse/scrub body: {e}")
 
     REQUEST_LOGS.appendleft(log_entry)
 
-    client = httpx.AsyncClient()
-    headers.pop("host", None)
     url = f"{TARGET_URL}/{path}"
+    log_debug(f"Forwarding request to: {url}")
     
-    req = client.build_request(
+    req = async_client.build_request(
         method=request.method, url=url, content=body,
-        headers=headers, params=request.query_params, timeout=60.0
+        headers=headers, params=request.query_params
     )
     
     try:
-        response = await client.send(req, stream=True)
+        fwd_start = time.perf_counter()
+        response = await async_client.send(req, stream=True)
+        log_debug(f"Target responded with status {response.status_code} in {time.perf_counter() - fwd_start:.4f}s")
     except Exception as e:
+        log_debug(f"Forwarding ERROR: {str(e)}")
         log_entry["resp_before"] = f"Error: {str(e)}"
         return Response(content=f"Proxy error: {str(e)}", status_code=502)
 
+    # Critical Fix: Remove Content-Length and Transfer-Encoding from response headers
+    # because the body length will change or become chunked
+    resp_headers = dict(response.headers)
+    resp_headers.pop("content-length", None)
+    resp_headers.pop("Content-Length", None)
+    resp_headers.pop("transfer-encoding", None)
+    resp_headers.pop("Transfer-Encoding", None)
+
+    log_debug(f"Total processing time before response stream: {time.perf_counter() - start_time:.4f}s")
+
     if pii_mapping and response.status_code == 200:
+        log_debug("Beginning Streaming De-Scrub...")
         return StreamingResponse(
             de_scrub_stream(response.aiter_bytes(), pii_mapping, log_entry),
-            status_code=response.status_code, headers=dict(response.headers)
+            status_code=response.status_code, headers=resp_headers
         )
 
     async def log_as_is_stream(res_iter):
@@ -281,10 +329,11 @@ async def proxy_engine(request: Request, path: str):
             yield chunk
         log_entry["resp_before"] = "".join(full_resp)
         log_entry["resp_after"] = log_entry["resp_before"]
+        log_debug("Finished non-scrubbed response stream")
 
     return StreamingResponse(
         log_as_is_stream(response.aiter_bytes()),
-        status_code=response.status_code, headers=dict(response.headers)
+        status_code=response.status_code, headers=resp_headers
     )
 
 if __name__ == "__main__":
