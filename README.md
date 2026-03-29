@@ -16,6 +16,7 @@ A privacy-preserving proxy for LLMs (Local and Remote) that automatically identi
 - **Response De-anonymization**: Automatically restores original PII in the model's response before returning it to the client.
 - **Streaming Support**: Handles chunked/streaming responses (SSE) with a buffering mechanism to prevent de-scrubbing failures on split placeholders.
 - **Visual Dashboard**: Integrated web interface at `/dashboard` to monitor scrubbing and de-scrubbing in real-time.
+- **Gemini CLI Integration**: Fully compatible with Gemini CLI by redirecting traffic through the proxy.
 
 ## How It Works
 
@@ -28,12 +29,23 @@ A privacy-preserving proxy for LLMs (Local and Remote) that automatically identi
 
 ## Configuration
 
-| Build Arg / Env Var | Default | Description |
+### Environment Variables / Build Args
+
+| Variable | Default | Description |
 |---------------------|---------|-------------|
 | `SCRUBBING_MODE`    | `generic` | `generic` or `semantic` labels. |
 | `ANALYZER_TYPE`     | `both`    | `presidio`, `pattern`, or `both`. |
 | `DEFAULT_EXCLUSIONS`| `""`      | Comma-separated list of strings to always redact. |
 | `TARGET_URL`        | `https://cloudcode-pa.googleapis.com` | The destination LLM API. |
+| `DEBUG`             | `false`   | Set to `true` for verbose step-by-step logs. |
+
+### CLI Integration
+
+To use this proxy with the Gemini CLI, set the following environment variable in your shell:
+
+```bash
+export CODE_ASSIST_ENDPOINT="http://localhost:8080"
+```
 
 ## Setup & Run
 
@@ -53,13 +65,33 @@ A privacy-preserving proxy for LLMs (Local and Remote) that automatically identi
     docker run -p 8080:8080 llm-proxy-pii
     ```
 
+3.  **Run with Debugging and Custom Target**:
+    ```bash
+    docker run -p 8080:8080 \
+      -e DEBUG=true \
+      -e TARGET_URL="https://generativelanguage.googleapis.com" \
+      llm-proxy-pii
+    ```
+
 The proxy will be available at `http://localhost:8080`.
 The dashboard will be available at `http://localhost:8080/dashboard`.
 
-## TODO List
+## Development & Testing
 
-- [ ] **OpenAI/Local LLM Support**: Add handlers for `/v1/chat/completions`.
-- [x] **Streaming Support**: Logic for chunked/streaming responses.
-- [ ] **Conversation Persistence**: Maintain PII mappings across multiple turns.
-- [x] **Visual Dashboard**: Web interface for log monitoring.
-- [x] **Comprehensive Testing**: Unit and E2E tests included.
+### Set up the virtual environment:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m spacy download en_core_web_lg
+```
+
+### Run Tests:
+```bash
+pytest
+```
+
+### Run Performance Comparison:
+```bash
+pytest tests/test_performance.py -s
+```

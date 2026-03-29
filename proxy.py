@@ -23,7 +23,7 @@ ANALYZER_TYPE = os.getenv("ANALYZER_TYPE", "both").lower()
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 # The target LLM provider endpoint
-TARGET_URL = os.getenv("TARGET_URL", "https://cloudcode-pa.googleapis.com")
+TARGET_URL = os.getenv("TARGET_URL", "https://cloudcode-pa.googleapis.com").rstrip("/")
 
 def log_debug(msg):
     if DEBUG:
@@ -232,16 +232,17 @@ async def proxy_engine(request: Request, path: str):
     body = await request.body()
     log_debug(f"Captured Body (Size: {len(body)} bytes)")
     
-    headers = dict(request.headers)
+    # Clone and sanitize headers
+    headers = {k.lower(): v for k, v in request.headers.items()}
     
-    # Critical Fix: Remove Content-Length and Transfer-Encoding from request headers
-    # to let httpx handle it correctly for the modified body
+    # Force identity encoding to prevent compression issues (e.g., "incorrect header check")
+    headers["accept-encoding"] = "identity"
+    
+    # Remove hop-by-hop and length headers
     headers.pop("content-length", None)
-    headers.pop("Content-Length", None)
     headers.pop("transfer-encoding", None)
-    headers.pop("Transfer-Encoding", None)
     headers.pop("host", None)
-    headers.pop("Host", None)
+    headers.pop("connection", None)
     
     pii_mapping = {}
     log_entry = {
@@ -255,13 +256,11 @@ async def proxy_engine(request: Request, path: str):
         "resp_after": ""
     }
     
-    # Trigger scrubbing for Gemini Internal and Public APIs
     is_gemini_path = "v1internal" in path or "v1/models" in path or "v1beta/models" in path
     
     if request.method == "POST" and is_gemini_path:
         try:
             data = json.loads(body)
-            # Support both internal and public JSON structures
             contents = None
             if "request" in data and "contents" in data["request"]:
                 contents = data["request"]["contents"]
@@ -288,7 +287,9 @@ async def proxy_engine(request: Request, path: str):
 
     REQUEST_LOGS.appendleft(log_entry)
 
-    url = f"{TARGET_URL}/{path}"
+    # Clean path joining
+    target_path = path if path.startswith("/") else f"/{path}"
+    url = f"{TARGET_URL}{target_path}"
     log_debug(f"Forwarding request to: {url}")
     
     req = async_client.build_request(
@@ -305,13 +306,12 @@ async def proxy_engine(request: Request, path: str):
         log_entry["resp_before"] = f"Error: {str(e)}"
         return Response(content=f"Proxy error: {str(e)}", status_code=502)
 
-    # Critical Fix: Remove Content-Length and Transfer-Encoding from response headers
-    # because the body length will change or become chunked
-    resp_headers = dict(response.headers)
+    # Sanitize response headers
+    resp_headers = {k.lower(): v for k, v in response.headers.items()}
     resp_headers.pop("content-length", None)
-    resp_headers.pop("Content-Length", None)
     resp_headers.pop("transfer-encoding", None)
-    resp_headers.pop("Transfer-Encoding", None)
+    resp_headers.pop("content-encoding", None) # Remove gzip/deflate if present
+    resp_headers.pop("connection", None)
 
     log_debug(f"Total processing time before response stream: {time.perf_counter() - start_time:.4f}s")
 
