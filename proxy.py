@@ -220,6 +220,51 @@ async def get_dashboard():
     </html>
     """
 
+@app.get("/ui", response_class=HTMLResponse)
+async def get_ui():
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Gemini Privacy Shield</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+            .shield-pulse {
+                animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            }
+            @keyframes pulse {
+                0%, 100% { opacity: 1; transform: scale(1); }
+                50% { opacity: .7; transform: scale(1.05); }
+            }
+        </style>
+    </head>
+    <body class="bg-slate-900 text-white font-sans flex items-center justify-center min-h-screen overflow-hidden">
+        <div class="text-center">
+            <div class="relative inline-block mb-8">
+                <div class="absolute inset-0 bg-blue-500 rounded-full blur-2xl opacity-20 shield-pulse"></div>
+                <svg class="w-32 h-32 text-blue-500 relative" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04a11.357 11.357 0 00-1.83 7.947c.583 3.91 2.744 7.322 5.8 9.516a11.954 11.954 0 0013.296 0c3.056-2.194 5.217-5.606 5.8-9.516a11.357 11.357 0 00-1.83-7.947z"></path>
+                </svg>
+            </div>
+            <h1 class="text-4xl font-black mb-4 tracking-tight">Privacy Shield <span class="text-blue-500">Active</span></h1>
+            <p class="text-slate-400 max-w-md mx-auto mb-8">
+                Your data is being scrubbed of PII before reaching Google's servers. 
+                Responses are automatically restored for you.
+            </p>
+            <div class="flex items-center justify-center space-x-4">
+                <a href="/dashboard" class="px-6 py-2 bg-slate-800 hover:bg-slate-700 rounded-full text-sm font-semibold transition">View Logs</a>
+                <div class="flex items-center space-x-2">
+                    <span class="w-2 h-2 bg-green-500 rounded-full animate-ping"></span>
+                    <span class="text-xs text-slate-500 uppercase tracking-widest font-bold">Encrypted Link</span>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
 @app.get("/api/logs")
 async def get_logs():
     return list(REQUEST_LOGS)
@@ -338,4 +383,4 @@ async def proxy_engine(request: Request, path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="127.0.0.1", port=8080)
