@@ -1,5 +1,5 @@
 {
-  "name": "llm-shield",
+  "name": "@yedidyahyams/llm-shield",
   "version": "0.1.0",
   "description": "Native Node.js bridge for a PII Privacy Proxy using Rust and Python",
   "main": "index.js",
