@@ -108,3 +108,16 @@ async def test_overlap_exclusion_handling():
     assert "<PRIVATE_DATA_1>" in scrubbed
     assert "-service" not in scrubbed 
     assert mapping["<PRIVATE_DATA_1>"] == "super-secret-service"
+
+@pytest.mark.asyncio
+async def test_api_key_scrubbing():
+    text = "Can you save my api key sk-123Srt45cd for openai?"
+    scrubbed, mapping = await scrub_text(text)
+    
+    # Verify the API key (gibberish/pattern) is replaced
+    assert "sk-123Srt45cd" not in scrubbed
+    assert "<PRIVATE_DATA_1>" in scrubbed or "<PRIVATE_KEY_1>" in scrubbed
+    
+    # Verify de-scrubbing restores it
+    restored = de_scrub_text(scrubbed, mapping)
+    assert restored == text

@@ -8,7 +8,6 @@ from datetime import datetime
 from collections import deque
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse, HTMLResponse
-from presidio_analyzer import AnalyzerEngine
 
 app = FastAPI()
 
@@ -19,7 +18,7 @@ REQUEST_LOGS = deque(maxlen=50)
 DEFAULT_EXCLUSIONS = os.getenv("DEFAULT_EXCLUSIONS", "").split(",")
 DEFAULT_EXCLUSIONS = [ex.strip() for ex in DEFAULT_EXCLUSIONS if ex.strip()]
 SCRUBBING_MODE = os.getenv("SCRUBBING_MODE", "generic").lower()
-ANALYZER_TYPE = os.getenv("ANALYZER_TYPE", "both").lower()
+ANALYZER_TYPE = os.getenv("ANALYZER_TYPE", "pattern").lower()
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 # The target LLM provider endpoint
@@ -38,7 +37,10 @@ def get_analyzer():
     global analyzer
     if analyzer is None:
         try:
+            from presidio_analyzer import AnalyzerEngine
             analyzer = AnalyzerEngine()
+        except ImportError:
+            print("[Error] Presidio is not installed. Use a non-default build or install 'presidio-analyzer' and 'spacy' manually.")
         except Exception as e:
             print(f"[Error] Failed to initialize Presidio: {e}")
     return analyzer
@@ -53,10 +55,10 @@ async def scrub_text(text: str):
     counts = {}
     seen_texts = {} 
 
-    def apply_replacement(target_text, secret, label):
+    def apply_replacement(secret, label):
         nonlocal scrubbed_text
         if not secret or secret in seen_texts:
-            return scrubbed_text
+            return
             
         if SCRUBBING_MODE == "semantic":
             counts[label] = counts.get(label, 0) + 1
@@ -67,13 +69,13 @@ async def scrub_text(text: str):
             
         mapping[placeholder] = secret
         seen_texts[secret] = placeholder
-        return scrubbed_text.replace(secret, placeholder)
+        scrubbed_text = scrubbed_text.replace(secret, placeholder)
 
     # 1. process Custom Exclusions FIRST
     sorted_exclusions = sorted(DEFAULT_EXCLUSIONS, key=len, reverse=True)
     for excluded in sorted_exclusions:
         if excluded in scrubbed_text:
-            scrubbed_text = apply_replacement(scrubbed_text, excluded, "EXCLUSION")
+            apply_replacement(excluded, "EXCLUSION")
 
     # 2. Collect potential matches from subsequent analyzers
     potential_matches = []
@@ -92,20 +94,29 @@ async def scrub_text(text: str):
         for ip in ips:
             potential_matches.append((ip, "IP_ADDRESS"))
 
-        potential_gibberish = re.findall(r'\b(?=[a-zA-Z]*\d)(?=\d*[a-zA-Z])[a-zA-Z0-9]{6,}\b', scrubbed_text)
+        potential_gibberish = re.findall(r'\b(?=[a-zA-Z0-9-]*\d)(?=[a-zA-Z0-9-]*[a-zA-Z])[a-zA-Z0-9-]{6,}\b', scrubbed_text)
         for g in potential_gibberish:
             potential_matches.append((g, "PRIVATE_KEY"))
 
     potential_matches.sort(key=lambda x: len(x[0]), reverse=True)
     for secret, label in potential_matches:
-        scrubbed_text = apply_replacement(scrubbed_text, secret, label)
+        apply_replacement(secret, label)
         
     return scrubbed_text, mapping
 
 def de_scrub_text(text: str, mapping: dict) -> str:
     """Replaces placeholders in the response with original PII values."""
     for placeholder, original_value in mapping.items():
+        # 1. Literal match: <PRIVATE_DATA_1>
         text = text.replace(placeholder, original_value)
+        
+        # 2. Unicode escape match (common in JSON): \u003cPRIVATE_DATA_1\u003e
+        unicode_placeholder = placeholder.replace("<", "\\u003c").replace(">", "\\u003e")
+        text = text.replace(unicode_placeholder, original_value)
+        
+        # 3. HTML escape match: &lt;PRIVATE_DATA_1&gt;
+        html_placeholder = placeholder.replace("<", "&lt;").replace(">", "&gt;")
+        text = text.replace(html_placeholder, original_value)
     return text
 
 async def de_scrub_stream(response_iterator, mapping: dict, log_entry: dict = None):
@@ -160,7 +171,7 @@ async def get_dashboard():
         <script src="https://cdn.tailwindcss.com"></script>
     </head>
     <body class="bg-gray-50 font-sans">
-        <div class="max-w-7xl mx-auto px-4 py-8">
+        <div class="max-w-[1600px] mx-auto px-4 py-8">
             <header class="mb-8 flex justify-between items-center">
                 <h1 class="text-3xl font-bold text-gray-900">Privacy Proxy Logs</h1>
                 <button onclick="fetchLogs()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">Refresh</button>
@@ -168,9 +179,27 @@ async def get_dashboard():
             <div id="logs-container" class="space-y-6"></div>
         </div>
         <script>
+            function highlightPlaceholders(text) {
+                if (!text) return text;
+                // First escape all HTML to prevent the browser from hiding <PLACEHOLDERS>
+                const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                // Then wrap the escaped placeholders in a highlighted span
+                return escaped.replace(/(&lt;[A-Z0-9_-]+&gt;)/g, '<span class="bg-yellow-300 px-1.5 py-0.5 rounded border border-yellow-500 text-black font-bold mx-0.5">$1</span>');
+            }
+
             async function fetchLogs() {
                 const response = await fetch('/api/logs');
-                const logs = await response.json();
+                const allLogs = await response.json();
+                
+                // Filter logs to only show those where the received response contains actual model content
+                const logs = allLogs.filter(log => 
+                    log.resp_before && (
+                        log.resp_before.toLowerCase().includes('"content"') || 
+                        log.resp_before.toLowerCase().includes('"parts"') ||
+                        log.resp_before.toLowerCase().includes('"text"')
+                    )
+                );
+
                 const container = document.getElementById('logs-container');
                 if (logs.length === 0) {
                     container.innerHTML = '<div class="text-center py-12 text-gray-500">No logs yet. Send some requests!</div>';
@@ -192,7 +221,7 @@ async def get_dashboard():
                                     </div>
                                     <div class="bg-green-50 p-3 rounded border border-green-100">
                                         <div class="text-[10px] text-green-400 mb-1 uppercase">Scrubbed</div>
-                                        <pre class="text-xs whitespace-pre-wrap break-all font-semibold">${log.req_after || '(None/Static)'}</pre>
+                                        <pre class="text-xs whitespace-pre-wrap break-all font-semibold">${highlightPlaceholders(log.req_after) || '(None/Static)'}</pre>
                                     </div>
                                 </div>
                             </div>
@@ -201,7 +230,7 @@ async def get_dashboard():
                                 <div class="space-y-3 mt-2">
                                     <div class="bg-gray-50 p-3 rounded border border-gray-100">
                                         <div class="text-[10px] text-gray-400 mb-1 uppercase">Received</div>
-                                        <pre class="text-xs whitespace-pre-wrap break-all">${log.resp_before || '(Streaming...)'}</pre>
+                                        <pre class="text-xs whitespace-pre-wrap break-all">${highlightPlaceholders(log.resp_before) || '(Streaming...)'}</pre>
                                     </div>
                                     <div class="bg-blue-50 p-3 rounded border border-blue-100">
                                         <div class="text-[10px] text-blue-400 mb-1 uppercase">Restored</div>
@@ -336,24 +365,31 @@ async def proxy_engine(request: Request, path: str):
         status_code=response.status_code, headers=resp_headers
     )
 
-import webview
-import threading
-import uvicorn
-
 def start_fastapi():
+    import uvicorn
     # Runs your FastAPI server in the background
-    uvicorn.run(app, host="127.0.0.1", port=8080, log_level="info")
+    # Use 0.0.0.0 to allow access from outside the container
+    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
 
 def run_application():
-    # 1. Start FastAPI in a background thread
-    t = threading.Thread(target=start_fastapi)
-    t.daemon = True
-    t.start()
+    import webview
+    # 1. Start FastAPI
+    if os.getenv("HEADLESS", "false").lower() == "true":
+        print("Running in HEADLESS mode (FastAPI only)...")
+        start_fastapi()
+    else:
+        t = threading.Thread(target=start_fastapi)
+        t.daemon = True
+        t.start()
 
-    # 2. Open a beautiful native GUI window for the user
-    # Point this to the local dashboard endpoint
-    webview.create_window('Gemini Privacy Shield', 'http://127.0.0.1:8080/dashboard')
-    webview.start()
+        # 2. Open a beautiful native GUI window for the user
+        try:
+            webview.create_window('Gemini Privacy Shield', 'http://127.0.0.1:8080/dashboard')
+            webview.start()
+        except Exception as e:
+            print(f"GUI failed to start: {e}. Falling back to server only.")
+            # If GUI fails (common in Docker), keep the thread alive or restart in main
+            start_fastapi()
 
 if __name__ == "__main__":
     run_application()
