@@ -8,7 +8,6 @@ from datetime import datetime
 from collections import deque
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse, HTMLResponse
-from presidio_analyzer import AnalyzerEngine
 
 app = FastAPI()
 
@@ -19,7 +18,7 @@ REQUEST_LOGS = deque(maxlen=50)
 DEFAULT_EXCLUSIONS = os.getenv("DEFAULT_EXCLUSIONS", "").split(",")
 DEFAULT_EXCLUSIONS = [ex.strip() for ex in DEFAULT_EXCLUSIONS if ex.strip()]
 SCRUBBING_MODE = os.getenv("SCRUBBING_MODE", "generic").lower()
-ANALYZER_TYPE = os.getenv("ANALYZER_TYPE", "both").lower()
+ANALYZER_TYPE = os.getenv("ANALYZER_TYPE", "pattern").lower()
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 # The target LLM provider endpoint
@@ -38,7 +37,10 @@ def get_analyzer():
     global analyzer
     if analyzer is None:
         try:
+            from presidio_analyzer import AnalyzerEngine
             analyzer = AnalyzerEngine()
+        except ImportError:
+            print("[Error] Presidio is not installed. Use a non-default build or install 'presidio-analyzer' and 'spacy' manually.")
         except Exception as e:
             print(f"[Error] Failed to initialize Presidio: {e}")
     return analyzer
