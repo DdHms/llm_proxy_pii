@@ -24,53 +24,65 @@ A privacy-preserving proxy for Large Language Models (LLMs) that automatically i
 
 ## ⚙️ Configuration
 
-LLM Shield is configured using Environment Variables. You can pass these directly when starting the application.
+LLM Shield is configured using Environment Variables.
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `SCRUBBING_MODE` | `generic` | `generic` or `semantic` labels. |
-| `ANALYZER_TYPE` | `both` | `presidio`, `pattern`, or `both`. |
-| `DEFAULT_EXCLUSIONS` | `""` | Comma-separated list of strings to always redact. |
+| `ANALYZER_TYPE` | `pattern` | `pattern` (Fast Regex), `presidio` (Deep NLP), or `both`. |
+| `SCRUBBING_MODE` | `generic` | `generic` (redact all as `<PRIVATE_DATA>`) or `semantic` (redact by label). |
+| `DEFAULT_EXCLUSIONS` | `""` | Comma-separated list of strings to ALWAYS redact (e.g., internal server names). |
 | `TARGET_URL` | `https://cloudcode-pa.googleapis.com` | The destination LLM API. |
-| `DEBUG` | `false` | Set to `true` for verbose logs. |
+| `DEBUG` | `false` | Set to `true` for verbose processing logs. |
+| `HEADLESS` | `false` | Set to `true` to skip launching the GUI window (useful for Docker/Servers). |
 
-### How to Pass Arguments with NPM
+---
 
-To configure the shield, pass the environment variables **before** the `npm start` command.
+## 🚀 Installation & Usage
 
-#### **Mac / Linux (Zsh or Bash)**
+Choose one of the following methods to get started.
+
+### 1. Docker (Recommended & Leanest)
+The Docker image is optimized to be as lean as possible. By default, it uses the `pattern` analyzer and does not install heavy NLP dependencies.
+
+#### **Quick Start**
 ```bash
-# Example: Use semantic labels and exclude specific internal terms
-SCRUBBING_MODE=semantic DEFAULT_EXCLUSIONS="my-api-key,internal-db-01" npm start
+docker run -d -p 8080:8080 --name llm-shield llm-proxy-pii
 ```
 
-#### **Windows (PowerShell)**
-```powershell
-# Example: Use semantic labels and exclude specific internal terms
-$env:SCRUBBING_MODE="semantic"; $env:DEFAULT_EXCLUSIONS="my-api-key,internal-ip"; npm start
+#### **Passing Environment Variables**
+Use the `-e` flag for each variable you want to configure:
+```bash
+docker run -d -p 8080:8080 \
+  -e ANALYZER_TYPE="pattern" \
+  -e SCRUBBING_MODE="semantic" \
+  -e DEFAULT_EXCLUSIONS="my-api-key,internal-db-01" \
+  -e HEADLESS="true" \
+  --name llm-shield llm-proxy-pii
 ```
 
 ---
 
-## 🚀 Installation & Setup (The "One-Click" Way)
+### 2. NPM (Local Native Binary)
+This method uses pre-compiled native binaries and runs directly on your machine.
 
-This method is recommended for most users. It uses pre-compiled native binaries so you **don't** need Rust or a C++ compiler installed.
+#### **Setup**
+1. **Download Binaries**: Download the `.node` files from GitHub Actions for your OS and place them in the project root.
+2. **Install Dependencies**:
+   ```bash
+   npm install
+   ```
 
-### 1. Download Binaries
-Download the pre-compiled `.node` files from the **GitHub Actions** tab for your OS and place them in the project root.
-*   `llm-shield.x86_64-pc-windows-msvc.node` (Windows)
-*   `llm-shield.x86_64-apple-darwin.node` (Mac Intel)
-*   `llm-shield.aarch64-apple-darwin.node` (Mac Silicon)
+#### **Running with Environment Variables**
+Pass variables directly before the `npm start` command.
 
-### 2. Install & Run
-Run these commands in your terminal:
-
+**Mac / Linux (Zsh or Bash)**
 ```bash
-# 1. This automatically sets up your Python environment and NLP models
-npm install
+ANALYZER_TYPE=pattern SCRUBBING_MODE=semantic npm start
+```
 
-# 2. This detects your OS and launches the proxy + GUI
-npm start
+**Windows (PowerShell)**
+```powershell
+$env:ANALYZER_TYPE="pattern"; $env:SCRUBBING_MODE="semantic"; npm start
 ```
 
 ---
