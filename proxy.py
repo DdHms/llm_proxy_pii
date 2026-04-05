@@ -55,10 +55,10 @@ async def scrub_text(text: str):
     counts = {}
     seen_texts = {} 
 
-    def apply_replacement(target_text, secret, label):
+    def apply_replacement(secret, label):
         nonlocal scrubbed_text
         if not secret or secret in seen_texts:
-            return scrubbed_text
+            return
             
         if SCRUBBING_MODE == "semantic":
             counts[label] = counts.get(label, 0) + 1
@@ -69,13 +69,13 @@ async def scrub_text(text: str):
             
         mapping[placeholder] = secret
         seen_texts[secret] = placeholder
-        return scrubbed_text.replace(secret, placeholder)
+        scrubbed_text = scrubbed_text.replace(secret, placeholder)
 
     # 1. process Custom Exclusions FIRST
     sorted_exclusions = sorted(DEFAULT_EXCLUSIONS, key=len, reverse=True)
     for excluded in sorted_exclusions:
         if excluded in scrubbed_text:
-            scrubbed_text = apply_replacement(scrubbed_text, excluded, "EXCLUSION")
+            apply_replacement(excluded, "EXCLUSION")
 
     # 2. Collect potential matches from subsequent analyzers
     potential_matches = []
@@ -100,14 +100,23 @@ async def scrub_text(text: str):
 
     potential_matches.sort(key=lambda x: len(x[0]), reverse=True)
     for secret, label in potential_matches:
-        scrubbed_text = apply_replacement(scrubbed_text, secret, label)
+        apply_replacement(secret, label)
         
     return scrubbed_text, mapping
 
 def de_scrub_text(text: str, mapping: dict) -> str:
     """Replaces placeholders in the response with original PII values."""
     for placeholder, original_value in mapping.items():
+        # 1. Literal match: <PRIVATE_DATA_1>
         text = text.replace(placeholder, original_value)
+        
+        # 2. Unicode escape match (common in JSON): \u003cPRIVATE_DATA_1\u003e
+        unicode_placeholder = placeholder.replace("<", "\\u003c").replace(">", "\\u003e")
+        text = text.replace(unicode_placeholder, original_value)
+        
+        # 3. HTML escape match: &lt;PRIVATE_DATA_1&gt;
+        html_placeholder = placeholder.replace("<", "&lt;").replace(">", "&gt;")
+        text = text.replace(html_placeholder, original_value)
     return text
 
 async def de_scrub_stream(response_iterator, mapping: dict, log_entry: dict = None):
@@ -180,7 +189,17 @@ async def get_dashboard():
 
             async function fetchLogs() {
                 const response = await fetch('/api/logs');
-                const logs = await response.json();
+                const allLogs = await response.json();
+                
+                // Filter logs to only show those where the received response contains actual model content
+                const logs = allLogs.filter(log => 
+                    log.resp_before && (
+                        log.resp_before.toLowerCase().includes('"content"') || 
+                        log.resp_before.toLowerCase().includes('"parts"') ||
+                        log.resp_before.toLowerCase().includes('"text"')
+                    )
+                );
+
                 const container = document.getElementById('logs-container');
                 if (logs.length === 0) {
                     container.innerHTML = '<div class="text-center py-12 text-gray-500">No logs yet. Send some requests!</div>';
