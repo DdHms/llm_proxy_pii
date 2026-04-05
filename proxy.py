@@ -94,7 +94,7 @@ async def scrub_text(text: str):
         for ip in ips:
             potential_matches.append((ip, "IP_ADDRESS"))
 
-        potential_gibberish = re.findall(r'\b(?=[a-zA-Z]*\d)(?=\d*[a-zA-Z])[a-zA-Z0-9]{6,}\b', scrubbed_text)
+        potential_gibberish = re.findall(r'\b(?=[a-zA-Z0-9-]*\d)(?=[a-zA-Z0-9-]*[a-zA-Z])[a-zA-Z0-9-]{6,}\b', scrubbed_text)
         for g in potential_gibberish:
             potential_matches.append((g, "PRIVATE_KEY"))
 
@@ -170,6 +170,14 @@ async def get_dashboard():
             <div id="logs-container" class="space-y-6"></div>
         </div>
         <script>
+            function highlightPlaceholders(text) {
+                if (!text) return text;
+                // First escape all HTML to prevent the browser from hiding <PLACEHOLDERS>
+                const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                // Then wrap the escaped placeholders in a highlighted span
+                return escaped.replace(/(&lt;[A-Z0-9_-]+&gt;)/g, '<span class="bg-yellow-300 px-1.5 py-0.5 rounded border border-yellow-500 text-black font-bold mx-0.5">$1</span>');
+            }
+
             async function fetchLogs() {
                 const response = await fetch('/api/logs');
                 const logs = await response.json();
@@ -194,7 +202,7 @@ async def get_dashboard():
                                     </div>
                                     <div class="bg-green-50 p-3 rounded border border-green-100">
                                         <div class="text-[10px] text-green-400 mb-1 uppercase">Scrubbed</div>
-                                        <pre class="text-xs whitespace-pre-wrap break-all font-semibold">${log.req_after || '(None/Static)'}</pre>
+                                        <pre class="text-xs whitespace-pre-wrap break-all font-semibold">${highlightPlaceholders(log.req_after) || '(None/Static)'}</pre>
                                     </div>
                                 </div>
                             </div>
@@ -203,7 +211,7 @@ async def get_dashboard():
                                 <div class="space-y-3 mt-2">
                                     <div class="bg-gray-50 p-3 rounded border border-gray-100">
                                         <div class="text-[10px] text-gray-400 mb-1 uppercase">Received</div>
-                                        <pre class="text-xs whitespace-pre-wrap break-all">${log.resp_before || '(Streaming...)'}</pre>
+                                        <pre class="text-xs whitespace-pre-wrap break-all">${highlightPlaceholders(log.resp_before) || '(Streaming...)'}</pre>
                                     </div>
                                     <div class="bg-blue-50 p-3 rounded border border-blue-100">
                                         <div class="text-[10px] text-blue-400 mb-1 uppercase">Restored</div>
@@ -338,16 +346,14 @@ async def proxy_engine(request: Request, path: str):
         status_code=response.status_code, headers=resp_headers
     )
 
-import webview
-import threading
-import uvicorn
-
 def start_fastapi():
+    import uvicorn
     # Runs your FastAPI server in the background
     # Use 0.0.0.0 to allow access from outside the container
     uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
 
 def run_application():
+    import webview
     # 1. Start FastAPI
     if os.getenv("HEADLESS", "false").lower() == "true":
         print("Running in HEADLESS mode (FastAPI only)...")

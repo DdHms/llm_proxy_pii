@@ -22,6 +22,14 @@ A privacy-preserving proxy for Large Language Models (LLMs) that automatically i
 
 ---
 
+## 📊 Monitoring
+
+The built-in dashboard provides real-time visibility into the scrubbing and de-scrubbing process. You can view original requests, their redacted versions, and how the responses were restored.
+
+![Dashboard Example](images/dashboard.png)
+
+---
+
 ## ⚙️ Configuration
 
 LLM Shield is configured using Environment Variables.
