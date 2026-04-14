@@ -1,3 +1,5 @@
+import time
+
 import httpx
 import json
 import re
@@ -194,6 +196,52 @@ async def get_dashboard():
                 return escaped.replace(/(&lt;[A-Z0-9_-]+&gt;)/g, '<span class="bg-yellow-300 px-1.5 py-0.5 rounded border border-yellow-500 text-black font-bold mx-0.5">$1</span>');
             }
 
+            function extractAndFormatContent(text) {
+                if (!text) return '(Streaming...)';
+                
+                const results = [];
+                function findContent(obj) {
+                    if (!obj || typeof obj !== 'object') return;
+                    if (Array.isArray(obj)) {
+                        obj.forEach(findContent);
+                        return;
+                    }
+                    for (const key in obj) {
+                        if (key === 'content') {
+                            results.push(obj[key]);
+                        } else {
+                            findContent(obj[key]);
+                        }
+                    }
+                }
+
+                // Try parsing as a single JSON or SSE stream
+                // Remove SSE prefixes like "data: "
+                const chunks = text.split(/\\n?data: /);
+                chunks.forEach(chunk => {
+                    const trimmed = chunk.trim();
+                    if (!trimmed || trimmed === '[DONE]') return;
+                    try {
+                        const parsed = JSON.parse(trimmed);
+                        findContent(parsed);
+                    } catch (e) {
+                        // Attempt to extract JSON from mixed text if direct parse fails
+                        const jsonMatch = trimmed.match(/\\{.*\\}/s);
+                        if (jsonMatch) {
+                            try {
+                                findContent(JSON.parse(jsonMatch[0]));
+                            } catch (innerE) {}
+                        }
+                    }
+                });
+
+                if (results.length === 0) return text;
+                // If there's only one content object, show it. If multiple (streaming), show as array.
+                const finalObj = results.length === 1 ? results[0] : results;
+                // Remove bloat like thoughtSignature from the display
+                return JSON.stringify(finalObj, (key, value) => key === 'thoughtSignature' ? undefined : value, 2);
+            }
+
             async function fetchLogs() {
                 const response = await fetch('/api/logs');
                 const allLogs = await response.json();
@@ -212,7 +260,11 @@ async def get_dashboard():
                     container.innerHTML = '<div class="text-center py-12 text-gray-500">No logs yet. Send some requests!</div>';
                     return;
                 }
-                container.innerHTML = logs.map(log => `
+                container.innerHTML = logs.map(log => {
+                    const prettyReceived = highlightPlaceholders(extractAndFormatContent(log.resp_before));
+                    const prettyRestored = extractAndFormatContent(log.resp_after);
+                    
+                    return `
                     <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                         <div class="bg-gray-50 px-6 py-3 border-b border-gray-200 flex justify-between items-center">
                             <span class="font-mono text-sm text-gray-500">${log.timestamp}</span>
@@ -236,18 +288,18 @@ async def get_dashboard():
                                 <h3 class="text-sm font-semibold text-gray-700 mb-2 uppercase tracking-wider text-blue-600">Response De-Scrubbing</h3>
                                 <div class="space-y-3 mt-2">
                                     <div class="bg-gray-50 p-3 rounded border border-gray-100">
-                                        <div class="text-[10px] text-gray-400 mb-1 uppercase">Received</div>
-                                        <pre class="text-xs whitespace-pre-wrap break-all">${highlightPlaceholders(log.resp_before) || '(Streaming...)'}</pre>
+                                        <div class="text-[10px] text-gray-400 mb-1 uppercase">Received (Prettified Content)</div>
+                                        <pre class="text-xs whitespace-pre-wrap break-all">${prettyReceived || '(Streaming...)'}</pre>
                                     </div>
                                     <div class="bg-blue-50 p-3 rounded border border-blue-100">
-                                        <div class="text-[10px] text-blue-400 mb-1 uppercase">Restored</div>
-                                        <pre class="text-xs whitespace-pre-wrap break-all font-semibold">${log.resp_after || '(Streaming...)'}</pre>
+                                        <div class="text-[10px] text-blue-400 mb-1 uppercase">Restored (Prettified Content)</div>
+                                        <pre class="text-xs whitespace-pre-wrap break-all font-semibold">${prettyRestored || '(Streaming...)'}</pre>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                `).join('');
+                `}).join('');
             }
             fetchLogs();
             setInterval(fetchLogs, 5000);
@@ -255,6 +307,7 @@ async def get_dashboard():
     </body>
     </html>
     """
+
 
 @app.get("/api/logs")
 async def get_logs():
