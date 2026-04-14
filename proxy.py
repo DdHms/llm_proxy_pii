@@ -47,84 +47,99 @@ def get_analyzer():
 
 async def scrub_text(text: str):
     """
-    Uses Presidio and custom regex/exclusion logic to redact PII.
-    Processes DEFAULT_EXCLUSIONS first, then other analyzers sequentially.
+    Uses Presidio and custom regex/exclusion logic to redact PII in a single pass.
+    Avoids placeholder corruption and respects word boundaries.
     """
     mapping = {}
-    scrubbed_text = text
     counts = {}
-    seen_texts = {} 
+    seen_texts = {} # mapping from original_text -> placeholder
+    matches = [] # List of (start, end, label, secret)
 
-    def apply_replacement(secret, label):
-        nonlocal scrubbed_text
-        if not secret or secret in seen_texts:
-            return
-            
-        if SCRUBBING_MODE == "semantic" or label in ["EXCLUSION", "ENV_VALUE"]:
-            counts[label] = counts.get(label, 0) + 1
-            placeholder = f"<{label}_{counts[label]}>"
-        else:
-            counts["PRIVATE_DATA"] = counts.get("PRIVATE_DATA", 0) + 1
-            placeholder = f"<PRIVATE_DATA_{counts['PRIVATE_DATA']}>"
-            
-        mapping[placeholder] = secret
-        seen_texts[secret] = placeholder
-        scrubbed_text = scrubbed_text.replace(secret, placeholder)
+    # 1. Custom Exclusions (with word boundaries)
+    for excluded in DEFAULT_EXCLUSIONS:
+        if not excluded: continue
+        pattern = r'\b' + re.escape(excluded) + r'\b'
+        for m in re.finditer(pattern, text):
+            matches.append((m.start(), m.end(), "EXCLUSION", excluded))
 
-    # 1. process Custom Exclusions FIRST
-    sorted_exclusions = sorted(DEFAULT_EXCLUSIONS, key=len, reverse=True)
-    for excluded in sorted_exclusions:
-        if excluded in scrubbed_text:
-            apply_replacement(excluded, "EXCLUSION")
-
-    # 2. Collect potential matches from subsequent analyzers
-    potential_matches = []
-
-    # Presidio PII Detection
+    # 2. Presidio PII Detection (on ORIGINAL text)
     if ANALYZER_TYPE in ["presidio", "both"]:
         az = get_analyzer()
         if az:
-            results = az.analyze(text=scrubbed_text, language='en')
+            results = az.analyze(text=text, language='en')
             for res in results:
-                potential_matches.append((scrubbed_text[res.start:res.end], res.entity_type))
+                matches.append((res.start, res.end, res.entity_type, text[res.start:res.end]))
 
-    # Pattern Detection
+    # 3. Pattern Detection (IPs, Private Keys)
     if ANALYZER_TYPE in ["pattern", "both"]:
-        ips = re.findall(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', scrubbed_text)
-        for ip in ips:
-            potential_matches.append((ip, "IP_ADDRESS"))
+        for m in re.finditer(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', text):
+            matches.append((m.start(), m.end(), "IP_ADDRESS", m.group()))
 
-        potential_gibberish = re.findall(r'\b(?=[a-zA-Z0-9-]*\d)(?=[a-zA-Z0-9-]*[a-zA-Z])[a-zA-Z0-9-]{6,}\b', scrubbed_text)
-        for g in potential_gibberish:
-            potential_matches.append((g, "PRIVATE_KEY"))
+        for m in re.finditer(r'\b(?=[a-zA-Z0-9-]*\d)(?=[a-zA-Z0-9-]*[a-zA-Z])[a-zA-Z0-9-]{6,}\b', text):
+            matches.append((m.start(), m.end(), "PRIVATE_KEY", m.group()))
 
-    # Environment Variable Detection (e.g. MY_ENV_VAR = secret)
-    env_vars = re.findall(r'\b[A-Z0-9_-]+\s*=\s*([a-zA-Z0-9_-]+)', scrubbed_text)
+    # 4. Environment Variable Detection
+    for m in re.finditer(r'\b[A-Z0-9_-]+\s*=\s*([a-zA-Z0-9_-]+)', text):
+        val = m.group(1)
+        matches.append((m.start(1), m.end(1), "ENV_VALUE", val))
 
-    for val in env_vars:
-        potential_matches.append((val, "ENV_VALUE"))
+    # Sort matches: start ascending, then length descending, then prioritize EXCLUSION label
+    matches.sort(key=lambda x: (x[0], -(x[1]-x[0]), x[2] != "EXCLUSION"))
 
-    potential_matches.sort(key=lambda x: len(x[0]), reverse=True)
-
-    for secret, label in potential_matches:
-        apply_replacement(secret, label)
+    # Resolve overlaps
+    resolved_matches = []
+    last_end = -1
+    for start, end, label, secret in matches:
+        if start >= last_end:
+            resolved_matches.append((start, end, label, secret))
+            last_end = end
+    
+    # Reconstruction in a single pass
+    final_pieces = []
+    current_pos = 0
+    for start, end, label, secret in resolved_matches:
+        # Add text before the match
+        final_pieces.append(text[current_pos:start])
         
+        # Determine placeholder
+        if secret in seen_texts:
+            placeholder = seen_texts[secret]
+        else:
+            if SCRUBBING_MODE == "semantic" or label in ["EXCLUSION", "ENV_VALUE"]:
+                counts[label] = counts.get(label, 0) + 1
+                placeholder = f"<{label}_{counts[label]}>"
+            else:
+                counts["PRIVATE_DATA"] = counts.get("PRIVATE_DATA", 0) + 1
+                placeholder = f"<PRIVATE_DATA_{counts['PRIVATE_DATA']}>"
+            
+            seen_texts[secret] = placeholder
+            mapping[placeholder] = secret
+        
+        final_pieces.append(placeholder)
+        current_pos = end
+        
+    final_pieces.append(text[current_pos:])
+    scrubbed_text = "".join(final_pieces)
     return scrubbed_text, mapping
 
 def de_scrub_text(text: str, mapping: dict) -> str:
     """Replaces placeholders in the response with original PII values."""
-    for placeholder, original_value in mapping.items():
-        # 1. Literal match: <PRIVATE_DATA_1>
+    # Sort placeholders by length descending to avoid partial matches
+    sorted_placeholders = sorted(mapping.keys(), key=len, reverse=True)
+    for placeholder in sorted_placeholders:
+        original_value = mapping[placeholder]
+        # 1. Literal match
         text = text.replace(placeholder, original_value)
-        
-        # 2. Unicode escape match (common in JSON): \u003cPRIVATE_DATA_1\u003e
+
+        # 2. Unicode escape match (common in JSON)
         unicode_placeholder = placeholder.replace("<", "\\u003c").replace(">", "\\u003e")
         text = text.replace(unicode_placeholder, original_value)
-        
-        # 3. HTML escape match: &lt;PRIVATE_DATA_1&gt;
+
+        # 3. HTML escape match
         html_placeholder = placeholder.replace("<", "&lt;").replace(">", "&gt;")
         text = text.replace(html_placeholder, original_value)
     return text
+
 
 async def de_scrub_stream(response_iterator, mapping: dict, log_entry: dict = None):
     """
