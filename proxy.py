@@ -71,13 +71,35 @@ async def scrub_text(text: str):
             
         mapping[placeholder] = secret
         seen_texts[secret] = placeholder
-        scrubbed_text = scrubbed_text.replace(secret, placeholder)
+        
+        # We need to replace exactly this instance of the secret if it was found via Presidio or Patterns
+        # For DEFAULT_EXCLUSIONS, we've already done the replacement using re.sub
+        if secret in scrubbed_text:
+            scrubbed_text = scrubbed_text.replace(secret, placeholder)
 
-    # 1. process Custom Exclusions FIRST
+    # 1. process Custom Exclusions FIRST (Case-Insensitive)
     sorted_exclusions = sorted(DEFAULT_EXCLUSIONS, key=len, reverse=True)
     for excluded in sorted_exclusions:
-        if excluded in scrubbed_text:
-            apply_replacement(excluded, "EXCLUSION")
+        # Use regex to find all case-insensitive matches
+        matches = re.finditer(re.escape(excluded), scrubbed_text, re.IGNORECASE)
+        # Sort matches by start position in reverse to avoid index shifts during replacement
+        # But wait, it's easier to just use re.sub with a callback to capture original text
+        
+        def replacement_callback(match):
+            original_val = match.group(0)
+            label = "EXCLUSION"
+            
+            if original_val in seen_texts:
+                return seen_texts[original_val]
+                
+            counts[label] = counts.get(label, 0) + 1
+            placeholder = f"<{label}_{counts[label]}>"
+            
+            mapping[placeholder] = original_val
+            seen_texts[original_val] = placeholder
+            return placeholder
+
+        scrubbed_text = re.sub(re.escape(excluded), replacement_callback, scrubbed_text, flags=re.IGNORECASE)
 
     # 2. Collect potential matches from subsequent analyzers
     potential_matches = []
@@ -350,26 +372,35 @@ async def proxy_engine(request: Request, path: str):
     if request.method == "POST" and is_gemini_path:
         try:
             data = json.loads(body)
-            contents = None
-            if "request" in data and "contents" in data["request"]:
-                contents = data["request"]["contents"]
-            elif "contents" in data:
-                contents = data["contents"]
-                
-            if contents:
-                log_debug("Starting PII Scrubbing...")
-                scrub_start = time.perf_counter()
-                for content in contents:
-                    for part in content.get("parts", []):
-                        if "text" in part:
-                            original_text = part["text"]
-                            log_entry["req_before"] = original_text
-                            scrubbed_text, mapping = await scrub_text(original_text)
-                            part["text"] = scrubbed_text
-                            log_entry["req_after"] = scrubbed_text
-                            pii_mapping.update(mapping)
-                log_debug(f"Scrubbing finished in {time.perf_counter() - scrub_start:.4f}s")
+            log_entry["req_before"] = json.dumps(data, indent=2)
             
+            log_debug("Starting Recursive PII Scrubbing...")
+            scrub_start = time.perf_counter()
+            
+            async def scrub_recursive(obj, in_tool=False):
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        # Track if we are inside a tool result object
+                        current_in_tool = in_tool or k in ("functionResponse", "toolResult", "function_response", "tool_response")
+                        
+                        if k == "text" and isinstance(v, str):
+                            scrubbed, mapping = await scrub_text(v)
+                            obj[k] = scrubbed
+                            pii_mapping.update(mapping)
+                        elif current_in_tool and isinstance(v, str) and k not in ("name", "id", "type"):
+                            scrubbed, mapping = await scrub_text(v)
+                            obj[k] = scrubbed
+                            pii_mapping.update(mapping)
+                        else:
+                            await scrub_recursive(v, current_in_tool)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        await scrub_recursive(item, in_tool)
+
+            await scrub_recursive(data)
+            log_debug(f"Scrubbing finished in {time.perf_counter() - scrub_start:.4f}s")
+            
+            log_entry["req_after"] = json.dumps(data, indent=2)
             body = json.dumps(data).encode("utf-8")
         except Exception as e:
             print(f"[Error] Failed to parse/scrub body: {e}")
