@@ -19,6 +19,7 @@ REQUEST_LOGS = deque(maxlen=50)
 # Load configurations from environment
 DEFAULT_EXCLUSIONS = os.getenv("DEFAULT_EXCLUSIONS", "").split(",")
 DEFAULT_EXCLUSIONS = [ex.strip() for ex in DEFAULT_EXCLUSIONS if ex.strip()]
+EXCLUSIONS_LOCK = threading.Lock()
 SCRUBBING_MODE = os.getenv("SCRUBBING_MODE", "generic").lower()
 ANALYZER_TYPE = os.getenv("ANALYZER_TYPE", "pattern").lower()
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
@@ -78,7 +79,9 @@ async def scrub_text(text: str):
             scrubbed_text = scrubbed_text.replace(secret, placeholder)
 
     # 1. process Custom Exclusions FIRST (Case-Insensitive)
-    sorted_exclusions = sorted(DEFAULT_EXCLUSIONS, key=len, reverse=True)
+    with EXCLUSIONS_LOCK:
+        sorted_exclusions = sorted(DEFAULT_EXCLUSIONS, key=len, reverse=True)
+    
     for excluded in sorted_exclusions:
         # Use regex to find all case-insensitive matches
         matches = re.finditer(re.escape(excluded), scrubbed_text, re.IGNORECASE)
@@ -202,14 +205,67 @@ async def get_dashboard():
         <script src="https://cdn.tailwindcss.com"></script>
     </head>
     <body class="bg-gray-50 font-sans">
-        <div class="max-w-[1600px] mx-auto px-4 py-8">
+        <div class="max-w-7xl mx-auto px-4 py-8">
             <header class="mb-8 flex justify-between items-center">
                 <h1 class="text-3xl font-bold text-gray-900">Privacy Proxy Logs</h1>
                 <button onclick="fetchLogs()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">Refresh</button>
             </header>
+
+            <!-- Exclusion Management Section -->
+            <section class="mb-8 bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                <h2 class="text-lg font-semibold text-gray-800 mb-4">Custom Exclusions</h2>
+                <div class="flex gap-4 mb-4">
+                    <input type="text" id="new-exclusion" placeholder="Add a phrase to exclude (e.g. Project Name)" 
+                           class="flex-1 px-4 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button onclick="addExclusion()" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 transition">Add</button>
+                </div>
+                <div id="exclusions-list" class="flex flex-wrap gap-2">
+                    <!-- Dynamic exclusions go here -->
+                </div>
+            </section>
+
             <div id="logs-container" class="space-y-6"></div>
         </div>
         <script>
+            async function fetchExclusions() {
+                const response = await fetch('/api/config');
+                const config = await response.json();
+                const container = document.getElementById('exclusions-list');
+                container.innerHTML = config.exclusions.map(ex => `
+                    <span class="inline-flex items-center bg-gray-100 text-gray-800 text-sm font-medium px-3 py-1 rounded-full border border-gray-300">
+                        ${ex}
+                        <button onclick="removeExclusion('${ex}')" class="ml-2 text-gray-400 hover:text-red-500 font-bold">&times;</button>
+                    </span>
+                `).join('');
+            }
+
+            async function addExclusion() {
+                const input = document.getElementById('new-exclusion');
+                const phrase = input.value.trim();
+                if (!phrase) return;
+
+                const response = await fetch('/api/exclusions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phrase })
+                });
+
+                if (response.ok) {
+                    input.value = '';
+                    fetchExclusions();
+                }
+            }
+
+            async function removeExclusion(phrase) {
+                const response = await fetch(`/api/exclusions/${encodeURIComponent(phrase)}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    fetchExclusions();
+                }
+            }
+
             function highlightPlaceholders(text) {
                 if (!text) return text;
                 // First escape all HTML to prevent the browser from hiding <PLACEHOLDERS>
@@ -324,6 +380,7 @@ async def get_dashboard():
                 `}).join('');
             }
             fetchLogs();
+            fetchExclusions();
             setInterval(fetchLogs, 5000);
         </script>
     </body>
@@ -334,6 +391,34 @@ async def get_dashboard():
 @app.get("/api/logs")
 async def get_logs():
     return list(REQUEST_LOGS)
+
+@app.get("/api/config")
+async def get_config():
+    with EXCLUSIONS_LOCK:
+        return {
+            "exclusions": list(DEFAULT_EXCLUSIONS),
+            "scrubbing_mode": SCRUBBING_MODE,
+            "analyzer_type": ANALYZER_TYPE
+        }
+
+@app.post("/api/exclusions")
+async def add_exclusion(request: Request):
+    data = await request.json()
+    phrase = data.get("phrase", "").strip()
+    if phrase:
+        with EXCLUSIONS_LOCK:
+            if phrase not in DEFAULT_EXCLUSIONS:
+                DEFAULT_EXCLUSIONS.append(phrase)
+        return {"status": "success", "phrase": phrase}
+    return {"status": "error", "message": "Phrase cannot be empty"}, 400
+
+@app.delete("/api/exclusions/{phrase}")
+async def remove_exclusion(phrase: str):
+    with EXCLUSIONS_LOCK:
+        if phrase in DEFAULT_EXCLUSIONS:
+            DEFAULT_EXCLUSIONS.remove(phrase)
+            return {"status": "success", "phrase": phrase}
+    return {"status": "error", "message": "Phrase not found"}, 404
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_engine(request: Request, path: str):

@@ -57,8 +57,13 @@ async def test_scrub_custom_exclusions():
 @pytest.mark.asyncio
 async def test_semantic_mode():
     os.environ["SCRUBBING_MODE"] = "semantic"
+    os.environ["ANALYZER_TYPE"] = "both"
     import proxy
     proxy.SCRUBBING_MODE = "semantic"
+    proxy.ANALYZER_TYPE = "both"
+    
+    if proxy.get_analyzer() is None:
+        pytest.skip("Presidio or spaCy model not available")
     
     text = "My email is test@example.com."
     scrubbed, mapping = await scrub_text(text)
