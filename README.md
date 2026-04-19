@@ -50,52 +50,72 @@ LLM Shield is configured using Environment Variables.
 
 ---
 
-## 🚀 Installation & Usage
+## 🚀 Installation
 
-Choose one of the following methods to get started.
+Choose the method that best fits your workflow.
 
-### 1. Docker (Recommended & Leanest)
-The Docker image is optimized to be as lean as possible. By default, it uses the `pattern` analyzer and does not install heavy NLP dependencies.
+### 1. Standalone Native App (Easiest)
+Download a single executable that includes everything you need. No Python, Node, or Rust installation required.
 
-#### **Quick Start**
+1.  **Download**: Go to the [Releases](https://github.com/Ddyedidya/llm-shield/releases) page and download the binary for your OS:
+    *   `LLMShield-windows.exe` (Windows)
+    *   `LLMShield-macos-silicon` (Apple Silicon M1/M2/M3)
+    *   `LLMShield-macos-intel` (Intel Mac)
+    *   `LLMShield-linux` (Linux)
+2.  **Permissions (Mac/Linux only)**: Open your terminal and grant execution permission:
+    ```bash
+    chmod +x LLMShield-macos-silicon
+    ```
+3.  **Run**: Double-click the file (Windows) or run from terminal:
+    ```bash
+    ./LLMShield-macos-silicon
+    ```
+
+### 2. Docker (Recommended for Servers)
+The most portable way to run the shield, especially in headless or cloud environments.
+
 ```bash
 docker run -d -p 8080:8080 --name llm-shield llm-proxy-pii
 ```
 
-#### **Passing Environment Variables**
-Use the `-e` flag for each variable you want to configure:
+### 3. NPM (Local/Development)
+Best if you want to integrate the shield into a Node.js project or modify the source code.
+
 ```bash
-docker run -d -p 8080:8080 \
-  -e ANALYZER_TYPE="pattern" \
-  -e SCRUBBING_MODE="semantic" \
-  -e DEFAULT_EXCLUSIONS="my-api-key,internal-db-01" \
-  -e HEADLESS="true" \
-  --name llm-shield llm-proxy-pii
+npm install
+npm run build
+npm start
 ```
 
 ---
 
-### 2. NPM (Local Native Binary)
-This method uses pre-compiled native binaries and runs directly on your machine.
+## ⚙️ Usage & Configuration
 
-#### **Setup**
-1. **Download Binaries**: Download the `.node` files from GitHub Actions for your OS and place them in the project root.
-2. **Install Dependencies**:
-   ```bash
-   npm install
-   ```
+Regardless of how you installed the shield, you can configure its behavior using Environment Variables.
 
-#### **Running with Environment Variables**
-Pass variables directly before the `npm start` command.
+### Common Configuration Options
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `DEFAULT_EXCLUSIONS` | `""` | Comma-separated list of strings to ALWAYS redact. |
+| `ANALYZER_TYPE` | `pattern` | `pattern` (Fast Regex), `presidio` (Deep NLP), or `both`. |
+| `SCRUBBING_MODE` | `generic` | `generic` (redact as `<PRIVATE_DATA>`) or `semantic` (redact by label). |
+| `HEADLESS` | `false` | Set to `true` to skip launching the GUI window. |
+
+### Running with Variables
 
 **Mac / Linux (Zsh or Bash)**
 ```bash
-ANALYZER_TYPE=pattern SCRUBBING_MODE=semantic npm start
+DEFAULT_EXCLUSIONS="my-project-name,internal-ip" ANALYZER_TYPE=both ./LLMShield-macos-silicon
 ```
 
 **Windows (PowerShell)**
 ```powershell
-$env:ANALYZER_TYPE="pattern"; $env:SCRUBBING_MODE="semantic"; npm start
+$env:DEFAULT_EXCLUSIONS="my-project-name"; $env:ANALYZER_TYPE="both"; .\LLMShield-windows.exe
+```
+
+**Docker**
+```bash
+docker run -d -p 8080:8080 -e DEFAULT_EXCLUSIONS="secret-val" llm-proxy-pii
 ```
 
 ---
