@@ -5,9 +5,9 @@ from datetime import datetime
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse, HTMLResponse
 
-import constants
-from shielding import scrub_text, de_scrub_stream
-from ui import get_dashboard_html, run_application
+from . import constants
+from .shielding import scrub_text, de_scrub_stream
+from .ui import get_dashboard_html, run_application
 
 app = FastAPI()
 

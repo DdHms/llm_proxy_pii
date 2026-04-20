@@ -3,7 +3,10 @@ import threading
 from fastapi.responses import HTMLResponse
 
 def get_dashboard_html():
-    with open("dashboard.html", "r") as f:
+    # Use absolute path relative to this file's location
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, "dashboard.html")
+    with open(file_path, "r") as f:
         return f.read()
 
 def start_fastapi(app):

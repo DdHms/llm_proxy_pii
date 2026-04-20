@@ -31,7 +31,6 @@ async def test_proxy_scrubs_prompt_and_restores_response():
     }
     
     # Expected scrubbed response from "Gemini"
-    # Using concatenation for the placeholder part just in case
     p_name = "<PE" + "RSON_1>"
     p_ip = "<IP_AD" + "DRESS_1>"
     
@@ -45,7 +44,7 @@ async def test_proxy_scrubs_prompt_and_restores_response():
         ]
     }
 
-    with patch("constants.async_client.send", new_callable=AsyncMock) as mock_send:
+    with patch("src.constants.async_client.send", new_callable=AsyncMock) as mock_send:
         mock_response = AsyncMock()
         mock_response.status_code = 200
         mock_response.headers = {"Content-Type": "application/json"}
@@ -58,7 +57,6 @@ async def test_proxy_scrubs_prompt_and_restores_response():
         mock_send.return_value = mock_response
 
         # Call the proxy endpoint
-        # Use concatenation for the URL to avoid environment scrubbing
         model_url = "/" + "v1" + "beta/models/gemini-pro:generateContent"
         response = client.post(
             model_url,
