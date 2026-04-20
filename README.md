@@ -152,3 +152,7 @@ pytest
 pytest tests/test_performance.py -s
 ```
 
+
+## TODO
+
+- [ ] Explore lightweight PII detection alternatives to replace Presidio (e.g., **Scrubadub** or **DataFog**).
