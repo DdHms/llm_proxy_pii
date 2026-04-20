@@ -1,5 +1,5 @@
 import re
-from . import constants
+from src import constants
 
 analyzer = None
 
