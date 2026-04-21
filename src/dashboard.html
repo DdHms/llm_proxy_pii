@@ -428,10 +428,10 @@
                 }
                 
                 container.innerHTML = logs.map(log => {
-                    const prettyReqBefore = extractUniqueStructure(log.req_before) || '(None/Static)';
-                    const prettyReqAfter = highlightPlaceholders(extractUniqueStructure(log.req_after)) || '(None/Static)';
-                    const prettyReceived = highlightPlaceholders(extractUniqueStructure(log.resp_before)) || '(Streaming...)';
-                    const prettyRestored = highlightPlaceholders(extractUniqueStructure(log.resp_after)) || '(Streaming...)';
+                    const prettyReqBefore = highlightPlaceholders(extractTextContent(log.req_before)) || '(None/Static)';
+                    const prettyReqAfter = highlightPlaceholders(extractTextContent(log.req_after)) || '(None/Static)';
+                    const prettyReceived = highlightPlaceholders(extractTextContent(log.resp_before)) || '(Streaming...)';
+                    const prettyRestored = highlightPlaceholders(extractTextContent(log.resp_after)) || '(Streaming...)';
                     
                     return `
                     <div class="bg-[#1a1a1a] rounded-2xl border border-white/5 overflow-hidden shadow-lg transition-transform hover:border-white/10">
