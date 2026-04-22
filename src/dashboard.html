@@ -145,6 +145,30 @@
                             </div>
                         </div>
                     </div>
+
+                    <div class="bg-[#1a1a1a] p-7 rounded-2xl border border-white/5 shadow-lg mt-8">
+                        <h3 class="text-lg font-medium text-gray-200 mb-2">LLM Provider Endpoint</h3>
+                        <p class="text-sm text-gray-500 mb-6">Select a predefined LLM provider or enter a custom endpoint URL.</p>
+                        
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Predefined Providers</label>
+                                <select id="predefined-endpoints" onchange="usePredefinedEndpoint()" 
+                                        class="w-full bg-[#242424] border border-white/10 text-white px-4 py-3 rounded-xl focus:outline-none focus:border-white/30 transition-all">
+                                    <option value="">-- Choose a provider --</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Active Endpoint URL</label>
+                                <div class="flex gap-3">
+                                    <input type="text" id="target-url" placeholder="https://..." 
+                                           class="flex-1 bg-[#242424] border border-white/10 text-white px-4 py-3 rounded-xl focus:outline-none focus:border-white/30 transition-all">
+                                    <button onclick="updateTargetUrl()" class="bg-white text-black font-semibold px-6 py-3 rounded-xl hover:bg-gray-200 transition-colors shadow-md">Update</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="endpoint-status" class="hidden text-xs font-medium px-3 py-2 rounded-lg inline-block mt-2"></div>
+                    </div>
                 </div>
             </section>
         </main>
@@ -164,25 +188,84 @@
                 }
             }
 
-            async function fetchExclusions() {
+            async function fetchConfig() {
                 const response = await fetch('/api/config');
                 const config = await response.json();
-                const container = document.getElementById('exclusions-list');
                 
-                if (config.exclusions.length === 0) {
-                    container.innerHTML = '<span class="text-sm text-gray-500 italic">No custom exclusions defined.</span>';
-                    return;
+                // Update exclusions
+                const container = document.getElementById('exclusions-list');
+                if (container) {
+                    if (config.exclusions.length === 0) {
+                        container.innerHTML = '<span class="text-sm text-gray-500 italic">No custom exclusions defined.</span>';
+                    } else {
+                        container.innerHTML = config.exclusions.map(ex => `
+                            <span class="inline-flex items-center bg-[#2a2a2a] text-gray-300 text-sm px-3 py-1.5 rounded-lg border border-white/10 shadow-sm group hover:border-white/20 transition-all">
+                                <span class="mr-2 font-mono text-xs text-purple-400">#</span>
+                                ${ex}
+                                <button onclick="removeExclusion('${ex}')" class="ml-3 text-gray-500 hover:text-red-400 hover:bg-red-400/10 p-0.5 rounded-md transition-colors">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                </button>
+                            </span>
+                        `).join('');
+                    }
+                }
+
+                // Update endpoint settings
+                const select = document.getElementById('predefined-endpoints');
+                const targetInput = document.getElementById('target-url');
+                
+                if (select && select.options.length <= 1) {
+                    for (const [name, url] of Object.entries(config.predefined_endpoints)) {
+                        const option = document.createElement('option');
+                        option.value = url;
+                        option.textContent = name;
+                        select.appendChild(option);
+                    }
                 }
                 
-                container.innerHTML = config.exclusions.map(ex => `
-                    <span class="inline-flex items-center bg-[#2a2a2a] text-gray-300 text-sm px-3 py-1.5 rounded-lg border border-white/10 shadow-sm group hover:border-white/20 transition-all">
-                        <span class="mr-2 font-mono text-xs text-purple-400">#</span>
-                        ${ex}
-                        <button onclick="removeExclusion('${ex}')" class="ml-3 text-gray-500 hover:text-red-400 hover:bg-red-400/10 p-0.5 rounded-md transition-colors">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                        </button>
-                    </span>
-                `).join('');
+                if (targetInput) targetInput.value = config.target_url;
+            }
+
+            function usePredefinedEndpoint() {
+                const select = document.getElementById('predefined-endpoints');
+                const targetInput = document.getElementById('target-url');
+                if (select && select.value !== undefined) {
+                    targetInput.value = select.value;
+                    if (select.options[select.selectedIndex].text === 'Custom') {
+                        targetInput.focus();
+                        targetInput.select();
+                    }
+                }
+            }
+
+            async function updateTargetUrl() {
+                const urlInput = document.getElementById('target-url');
+                const statusEl = document.getElementById('endpoint-status');
+                if (!urlInput || !urlInput.value.trim()) return;
+                
+                const url = urlInput.value.trim();
+
+                const response = await fetch('/api/target_url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                if (response.ok) {
+                    if (statusEl) {
+                        statusEl.textContent = 'Endpoint updated successfully';
+                        statusEl.className = 'text-green-400 bg-green-400/10 px-3 py-2 rounded-lg inline-block mt-2';
+                        statusEl.classList.remove('hidden');
+                        setTimeout(() => statusEl.classList.add('hidden'), 3000);
+                    }
+                    fetchConfig();
+                } else {
+                    if (statusEl) {
+                        statusEl.textContent = 'Failed to update endpoint';
+                        statusEl.className = 'text-red-400 bg-red-400/10 px-3 py-2 rounded-lg inline-block mt-2';
+                        statusEl.classList.remove('hidden');
+                    }
+                }
             }
 
             async function addExclusion() {
@@ -198,7 +281,7 @@
 
                 if (response.ok) {
                     input.value = '';
-                    fetchExclusions();
+                    fetchConfig();
                 }
             }
 
@@ -208,7 +291,7 @@
                 });
 
                 if (response.ok) {
-                    fetchExclusions();
+                    fetchConfig();
                 }
             }
 
@@ -487,7 +570,7 @@
                 });
             }
             fetchLogs();
-            fetchExclusions();
+            fetchConfig();
             setInterval(fetchLogs, 5000);
             
             // Listen for enter on input

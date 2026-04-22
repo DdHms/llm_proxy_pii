@@ -9,8 +9,7 @@ from fastapi.responses import StreamingResponse, HTMLResponse
 import httpx
 
 from src import constants
-from src.constants import REQUEST_LOGS, DEFAULT_EXCLUSIONS, EXCLUSIONS_LOCK, SCRUBBING_MODE, ANALYZER_TYPE, log_debug, \
-    TARGET_URL
+from src.constants import REQUEST_LOGS, DEFAULT_EXCLUSIONS, EXCLUSIONS_LOCK, SCRUBBING_MODE, ANALYZER_TYPE, log_debug
 from src.shielding import scrub_text, de_scrub_stream
 from src.ui import get_dashboard_html, run_application
 
@@ -32,8 +31,21 @@ async def get_config():
         return {
             "exclusions": list(DEFAULT_EXCLUSIONS),
             "scrubbing_mode": SCRUBBING_MODE,
-            "analyzer_type": ANALYZER_TYPE
+            "analyzer_type": ANALYZER_TYPE,
+            "target_url": constants.TARGET_URL,
+            "predefined_endpoints": constants.PREDEFINED_ENDPOINTS,
+            "scrub_path_patterns": constants.SCRUB_PATH_PATTERNS
         }
+
+@app.post("/api/target_url")
+async def update_target_url(request: Request):
+    data = await request.json()
+    new_url = data.get("url", "").strip().rstrip("/")
+    if new_url:
+        constants.TARGET_URL = new_url
+        log_debug(f"Target URL updated to: {new_url}")
+        return {"status": "success", "url": new_url}
+    return {"status": "error", "message": "URL cannot be empty"}, 400
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def get_dashboard():
@@ -94,9 +106,10 @@ async def proxy_engine(request: Request, path: str):
         "resp_after": ""
     }
 
-    is_gemini_path = "v1internal" in path or "v1/models" in path or "v1beta/models" in path
+    # Determine if this is an LLM interaction that should be scrubbed
+    should_scrub = any(pattern in path for pattern in constants.SCRUB_PATH_PATTERNS)
 
-    if request.method == "POST" and is_gemini_path:
+    if request.method == "POST" and should_scrub:
         try:
             data = json.loads(body)
             log_entry["req_before"] = json.dumps(data, indent=2)
@@ -138,7 +151,7 @@ async def proxy_engine(request: Request, path: str):
 
     # Clean path joining
     target_path = path if path.startswith("/") else f"/{path}"
-    url = f"{TARGET_URL}{target_path}"
+    url = f"{constants.TARGET_URL}{target_path}"
     log_debug(f"Forwarding request to: {url}")
 
     req = async_client.build_request(

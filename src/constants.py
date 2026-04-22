@@ -18,6 +18,21 @@ DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 # The target LLM provider endpoint
 TARGET_URL = os.getenv("TARGET_URL", "https://cloudcode-pa.googleapis.com").rstrip("/")
 
+PREDEFINED_ENDPOINTS = {
+    "Gemini CLI": "https://cloudcode-pa.googleapis.com",
+    "Claude Code": "https://api.anthropic.com",
+    "Codex": "https://api.openai.com",
+    "Gemini Vertex AI": "https://us-central1-aiplatform.googleapis.com",
+    "Custom": ""
+}
+
+SCRUB_PATH_PATTERNS = [
+    "v1internal", "v1/models", "v1beta/models",  # Gemini
+    "v1/messages", "v1/complete",                # Anthropic/Claude
+    "v1/chat/completions", "v1/completions",     # OpenAI/Codex
+    "publishers/google/models"                    # Vertex AI
+]
+
 # Initialize global client for reuse
 async_client = httpx.AsyncClient(timeout=60.0)
 
