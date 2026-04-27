@@ -1,6 +1,7 @@
 import os
 import threading
 from fastapi.responses import HTMLResponse
+from src import constants
 
 def get_dashboard_html():
     # Use absolute path relative to this file's location
@@ -11,9 +12,14 @@ def get_dashboard_html():
 
 def start_fastapi(app):
     import uvicorn
-    # Runs your FastAPI server in the background
-    # Use 0.0.0.0 to allow access from outside the container
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    constants.print_startup_urls()
+    if constants.HOST in ("0.0.0.0", "::") and not constants.DASHBOARD_TOKEN:
+        print(
+            "[Warning] LLM Shield is listening on all interfaces without DASHBOARD_TOKEN. "
+            "Dashboard/API endpoints may expose sensitive request logs to your network.",
+            flush=True,
+        )
+    uvicorn.run(app, host=constants.HOST, port=constants.PORT, log_level="info")
 
 def run_application(app):
     import webview
@@ -28,7 +34,7 @@ def run_application(app):
 
         # 2. Open a beautiful native GUI window for the user
         try:
-            webview.create_window('Gemini Privacy Shield', 'http://localhost:8080/dashboard')
+            webview.create_window('Gemini Privacy Shield', f'http://127.0.0.1:{constants.PORT}/dashboard')
             webview.start()
         except Exception as e:
             print(f"GUI failed to start: {e}. Falling back to server only.")

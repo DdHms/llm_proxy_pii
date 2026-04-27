@@ -26,6 +26,7 @@ ENV SCRUBBING_MODE=$SCRUBBING_MODE
 
 # Target LLM provider (default: Google Cloud Code)
 ENV TARGET_URL="https://cloudcode-pa.googleapis.com"
+ENV HOST="0.0.0.0"
 
 # Copy all source files
 COPY src/ ./src/
