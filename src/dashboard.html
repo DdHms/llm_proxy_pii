@@ -569,6 +569,7 @@
                         <div class="bg-[#242424] px-5 py-3 border-b border-white/5 flex justify-between items-center">
                             <div class="flex items-center gap-3">
                                 <span class="px-2.5 py-1 rounded-md text-[10px] font-bold bg-white/10 text-gray-200 uppercase tracking-wider">${log.method} ${log.path.split('/').pop()}</span>
+                                <span class="px-2.5 py-1 rounded-md text-[10px] font-bold ${log.redaction_count > 0 ? 'bg-green-500/15 text-green-300 border border-green-500/20' : 'bg-yellow-500/10 text-yellow-300 border border-yellow-500/20'} uppercase tracking-wider">${log.redaction_count || 0} redactions</span>
                                 <span class="font-mono text-[11px] text-gray-500">${log.timestamp}</span>
                             </div>
                         </div>

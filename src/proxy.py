@@ -15,6 +15,9 @@ from src.ui import get_dashboard_html, run_application
 app = FastAPI()
 
 TEXT_CONTENT_TYPES = {"text", "input_text", "output_text"}
+GEMINI_CONTEXT_KEYS = {"session_context", "sessionContext"}
+TOOL_OUTPUT_KEYS = {"output", "stdout", "stderr"}
+NEVER_SCRUB_KEYS = {"id", "name", "type", "role", "model", "call_id", "tool_call_id", "server_label"}
 
 
 async def require_dashboard_access(request: Request, response: Response):
@@ -53,14 +56,22 @@ async def scrub_value(value, replacement_state: dict):
 
 
 async def scrub_gemini_like_payload(data, replacement_state: dict, pii_mapping: dict):
-    async def scrub_recursive(obj, in_tool=False):
+    async def scrub_recursive(obj, in_tool=False, in_context=False):
+        if isinstance(obj, str) and in_context:
+            return await scrub_value(obj, replacement_state)
+
         if isinstance(obj, dict):
             for k, v in obj.items():
                 current_in_tool = in_tool or k in (
                     "functionResponse", "toolResult", "function_response", "tool_response"
                 )
+                current_in_context = in_context or k in GEMINI_CONTEXT_KEYS
 
                 if k == "text" and isinstance(v, str):
+                    scrubbed, mapping = await scrub_value(v, replacement_state)
+                    obj[k] = scrubbed
+                    pii_mapping.update(mapping)
+                elif current_in_context and isinstance(v, str):
                     scrubbed, mapping = await scrub_value(v, replacement_state)
                     obj[k] = scrubbed
                     pii_mapping.update(mapping)
@@ -69,10 +80,18 @@ async def scrub_gemini_like_payload(data, replacement_state: dict, pii_mapping: 
                     obj[k] = scrubbed
                     pii_mapping.update(mapping)
                 else:
-                    await scrub_recursive(v, current_in_tool)
+                    result = await scrub_recursive(v, current_in_tool, current_in_context)
+                    if current_in_context and isinstance(v, str):
+                        obj[k], mapping = result
+                        pii_mapping.update(mapping)
         elif isinstance(obj, list):
-            for item in obj:
-                await scrub_recursive(item, in_tool)
+            for idx, item in enumerate(obj):
+                result = await scrub_recursive(item, in_tool, in_context)
+                if in_context and isinstance(item, str):
+                    obj[idx], mapping = result
+                    pii_mapping.update(mapping)
+
+        return None, {}
 
     await scrub_recursive(data)
 
@@ -96,10 +115,38 @@ async def scrub_text_content(content, replacement_state: dict, pii_mapping: dict
                 scrubbed, mapping = await scrub_value(item["content"], replacement_state)
                 item["content"] = scrubbed
                 pii_mapping.update(mapping)
+            elif isinstance(item.get("content"), list):
+                await scrub_text_content(item["content"], replacement_state, pii_mapping)
 
         return None, {}
 
     return None, {}
+
+
+async def scrub_tool_outputs(obj, replacement_state: dict, pii_mapping: dict):
+    if isinstance(obj, list):
+        for item in obj:
+            await scrub_tool_outputs(item, replacement_state, pii_mapping)
+        return
+
+    if not isinstance(obj, dict):
+        return
+
+    for key, value in obj.items():
+        if key in NEVER_SCRUB_KEYS:
+            continue
+
+        if key in TOOL_OUTPUT_KEYS:
+            if isinstance(value, str):
+                scrubbed, mapping = await scrub_value(value, replacement_state)
+                obj[key] = scrubbed
+                pii_mapping.update(mapping)
+            elif isinstance(value, list):
+                await scrub_text_content(value, replacement_state, pii_mapping)
+            elif isinstance(value, dict):
+                await scrub_tool_outputs(value, replacement_state, pii_mapping)
+        elif isinstance(value, (dict, list)):
+            await scrub_tool_outputs(value, replacement_state, pii_mapping)
 
 
 async def scrub_openai_payload(data, replacement_state: dict, pii_mapping: dict):
@@ -146,6 +193,8 @@ async def scrub_openai_payload(data, replacement_state: dict, pii_mapping: dict)
             message["content"] = scrubbed
             pii_mapping.update(mapping)
 
+    await scrub_tool_outputs(data.get("input"), replacement_state, pii_mapping)
+
 
 async def scrub_anthropic_payload(data, replacement_state: dict, pii_mapping: dict):
     if isinstance(data.get("system"), str):
@@ -169,6 +218,8 @@ async def scrub_anthropic_payload(data, replacement_state: dict, pii_mapping: di
         if isinstance(content, str):
             message["content"] = scrubbed
             pii_mapping.update(mapping)
+
+    await scrub_tool_outputs(data.get("messages"), replacement_state, pii_mapping)
 
 
 async def scrub_llm_payload(data, path: str, replacement_state: dict, pii_mapping: dict):
@@ -268,13 +319,13 @@ async def proxy_engine(request: Request, path: str):
         "req_before": "",
         "req_after": "",
         "resp_before": "",
-        "resp_after": ""
+        "resp_after": "",
+        "redaction_count": 0,
+        "scrubbed": False,
+        "scrub_error": ""
     }
 
-    # Determine if this is an LLM interaction that should be scrubbed
-    should_scrub = any(pattern in path for pattern in constants.SCRUB_PATH_PATTERNS)
-
-    if request.method == "POST" and should_scrub:
+    if request.method == "POST":
         try:
             data = json.loads(body)
             log_entry["req_before"] = json.dumps(data, indent=2)
@@ -283,12 +334,15 @@ async def proxy_engine(request: Request, path: str):
             scrub_start = time.perf_counter()
             replacement_state = {"counts": {}, "seen_texts": {}}
             await scrub_llm_payload(data, path, replacement_state, pii_mapping)
+            log_entry["redaction_count"] = len(pii_mapping)
+            log_entry["scrubbed"] = bool(pii_mapping)
             log_debug(f"Scrubbing finished in {time.perf_counter() - scrub_start:.4f}s")
 
 
             log_entry["req_after"] = json.dumps(data, indent=2)
             body = json.dumps(data).encode("utf-8")
         except Exception as e:
+            log_entry["scrub_error"] = str(e)
             print(f"[Error] Failed to parse/scrub body: {e}")
 
     REQUEST_LOGS.appendleft(log_entry)

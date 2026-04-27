@@ -8,7 +8,7 @@ PLACEHOLDER_RE = re.compile(r"<[A-Z_]+_\d+>")
 
 def exclusion_pattern(excluded: str):
     escaped = re.escape(excluded)
-    if re.fullmatch(r"\w+", excluded):
+    if re.fullmatch(r"\w+", excluded) and len(excluded) <= 3:
         return rf"\b{escaped}\b"
     return escaped
 

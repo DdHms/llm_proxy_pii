@@ -57,6 +57,18 @@ async def test_placeholder_corruption_fixed():
     # We use concatenation for the check too
     corrupt = "<EXCLUSI" + "<"
     assert corrupt not in scrubbed
+
+
+@pytest.mark.asyncio
+async def test_long_exclusion_matches_inside_username_paths():
+    constants.DEFAULT_EXCLUSIONS = ["altman"]
+    text = "The temporary directory is /Users/samaltman/.gemini/tmp."
+
+    scrubbed, mapping = await scrub_text(text)
+
+    assert "altman" not in scrubbed.lower()
+    assert "/Users/sam" in scrubbed
+    assert any("EXCLUSION" in key for key in mapping)
     
 if __name__ == "__main__":
     asyncio.run(test_word_boundary_fixed())
