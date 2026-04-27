@@ -14,6 +14,9 @@ EXCLUSIONS_LOCK = threading.Lock()
 SCRUBBING_MODE = os.getenv("SCRUBBING_MODE", "generic").lower()
 ANALYZER_TYPE = os.getenv("ANALYZER_TYPE", "pattern").lower()
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+HOST = os.getenv("HOST", "127.0.0.1")
+PORT = int(os.getenv("PORT", "8080"))
+DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")
 
 # The target LLM provider endpoint
 TARGET_URL = os.getenv("TARGET_URL", "https://cloudcode-pa.googleapis.com").rstrip("/")
@@ -35,6 +38,23 @@ SCRUB_PATH_PATTERNS = [
 
 # Initialize global client for reuse
 async_client = httpx.AsyncClient(timeout=60.0)
+
+
+def public_dashboard_url():
+    display_host = "localhost" if HOST in ("0.0.0.0", "::", "127.0.0.1") else HOST
+    return f"http://{display_host}:{PORT}/dashboard"
+
+
+def print_startup_urls():
+    print(f"Proxy endpoint: http://localhost:{PORT}", flush=True)
+    print(f"Dashboard: {public_dashboard_url()}", flush=True)
+    if DASHBOARD_TOKEN:
+        print(
+            "Dashboard auth is enabled. Open /dashboard?token=<DASHBOARD_TOKEN> once or use "
+            "Authorization: Bearer <token>.",
+            flush=True,
+        )
+
 
 def log_debug(msg):
     if DEBUG:

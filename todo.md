@@ -2,12 +2,6 @@
 
 ## High Priority
 
-- Protect dashboard and internal API endpoints.
-  - `/api/logs` exposes original prompts, original responses, and restored sensitive data.
-  - The server binds to `0.0.0.0`, making these endpoints reachable by anyone with network access to the port.
-  - Consider localhost-only defaults, authentication, or disabling logs in shared deployments.
-  - Affected file: `src/proxy.py`.
-
 - Repair the documented NPM/native start path.
   - `node src/index.js` fails when no compatible `.node` binding exists.
   - `npm run build` currently fails because `napi` is unavailable from the script environment.

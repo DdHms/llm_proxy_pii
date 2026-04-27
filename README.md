@@ -45,6 +45,9 @@ LLM Shield is configured using Environment Variables.
 | `SCRUBBING_MODE` | `generic` | `generic` (redact all as `<PRIVATE_DATA>`) or `semantic` (redact by label). |
 | `DEFAULT_EXCLUSIONS` | `""` | Comma-separated list of strings to ALWAYS redact (e.g., internal server names). |
 | `TARGET_URL` | `https://cloudcode-pa.googleapis.com` | The destination LLM API. |
+| `HOST` | `127.0.0.1` | Interface for the local proxy to bind. Use `0.0.0.0` only when the service must be reachable from outside the machine/container. |
+| `PORT` | `8080` | Local proxy port. |
+| `DASHBOARD_TOKEN` | `""` | Optional bearer token required for `/dashboard` and internal `/api/*` routes when set. A warning is printed when binding to all interfaces without it. |
 | `DEBUG` | `false` | Set to `true` for verbose processing logs. |
 | `HEADLESS` | `false` | Set to `true` to skip launching the GUI window (useful for Docker/Servers). |
 
@@ -99,9 +102,13 @@ Regardless of how you installed the shield, you can configure its behavior using
 | `DEFAULT_EXCLUSIONS` | `""` | Comma-separated list of strings to ALWAYS redact. |
 | `ANALYZER_TYPE` | `pattern` | `pattern` (Fast Regex), `presidio` (Deep NLP), or `both`. |
 | `SCRUBBING_MODE` | `generic` | `generic` (redact as `<PRIVATE_DATA>`) or `semantic` (redact by label). |
+| `HOST` | `127.0.0.1` | Interface for the local proxy to bind. Docker sets this to `0.0.0.0`. |
+| `PORT` | `8080` | Local proxy port. |
 | `HEADLESS` | `false` | Set to `true` to skip launching the GUI window. |
 
 ### Running with Variables
+
+When `DASHBOARD_TOKEN` is set, pass `Authorization: Bearer <token>` for API access or open `/dashboard?token=<token>` once in the browser to set the dashboard cookie.
 
 **Mac / Linux (Zsh or Bash)**
 ```bash

@@ -4,7 +4,7 @@ import time
 import json
 import uuid
 from datetime import datetime
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse, HTMLResponse
 import httpx
 
@@ -15,17 +15,39 @@ from src.ui import get_dashboard_html, run_application
 
 app = FastAPI()
 
+
+async def require_dashboard_access(request: Request, response: Response):
+    if not constants.DASHBOARD_TOKEN:
+        return
+
+    expected = f"Bearer {constants.DASHBOARD_TOKEN}"
+    supplied_token = request.query_params.get("token")
+    if request.headers.get("authorization") == expected:
+        return
+    if request.cookies.get("dashboard_token") == constants.DASHBOARD_TOKEN:
+        return
+    if supplied_token == constants.DASHBOARD_TOKEN:
+        response.set_cookie(
+            "dashboard_token",
+            constants.DASHBOARD_TOKEN,
+            httponly=True,
+            samesite="lax",
+        )
+        return
+
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
 @app.get("/health")
 async def health():
     return {"status": "healthy", "analyzer": constants.ANALYZER_TYPE, "mode": constants.SCRUBBING_MODE}
 
 
-@app.get("/api/logs")
+@app.get("/api/logs", dependencies=[Depends(require_dashboard_access)])
 async def get_logs():
     return list(REQUEST_LOGS)
 
 
-@app.get("/api/config")
+@app.get("/api/config", dependencies=[Depends(require_dashboard_access)])
 async def get_config():
     with EXCLUSIONS_LOCK:
         return {
@@ -37,7 +59,7 @@ async def get_config():
             "scrub_path_patterns": constants.SCRUB_PATH_PATTERNS
         }
 
-@app.post("/api/target_url")
+@app.post("/api/target_url", dependencies=[Depends(require_dashboard_access)])
 async def update_target_url(request: Request):
     data = await request.json()
     new_url = data.get("url", "").strip().rstrip("/")
@@ -47,13 +69,13 @@ async def update_target_url(request: Request):
         return {"status": "success", "url": new_url}
     return {"status": "error", "message": "URL cannot be empty"}, 400
 
-@app.get("/dashboard", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse, dependencies=[Depends(require_dashboard_access)])
 async def get_dashboard():
     return get_dashboard_html()
 
 
 
-@app.post("/api/exclusions")
+@app.post("/api/exclusions", dependencies=[Depends(require_dashboard_access)])
 async def add_exclusion(request: Request):
     data = await request.json()
     phrase = data.get("phrase", "").strip()
@@ -65,7 +87,7 @@ async def add_exclusion(request: Request):
     return {"status": "error", "message": "Phrase cannot be empty"}, 400
 
 
-@app.delete("/api/exclusions/{phrase}")
+@app.delete("/api/exclusions/{phrase}", dependencies=[Depends(require_dashboard_access)])
 async def remove_exclusion(phrase: str):
     with EXCLUSIONS_LOCK:
         if phrase in DEFAULT_EXCLUSIONS:
@@ -202,9 +224,14 @@ async def proxy_engine(request: Request, path: str):
 
 def start_fastapi():
     import uvicorn
-    # Runs your FastAPI server in the background
-    # Use 0.0.0.0 to allow access from outside the container
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    constants.print_startup_urls()
+    if constants.HOST in ("0.0.0.0", "::") and not constants.DASHBOARD_TOKEN:
+        print(
+            "[Warning] LLM Shield is listening on all interfaces without DASHBOARD_TOKEN. "
+            "Dashboard/API endpoints may expose sensitive request logs to your network.",
+            flush=True,
+        )
+    uvicorn.run(app, host=constants.HOST, port=constants.PORT, log_level="info")
 
 
 def run_application():
@@ -220,7 +247,7 @@ def run_application():
 
         # 2. Open a beautiful native GUI window for the user
         try:
-            webview.create_window('Gemini Privacy Shield', 'http://127.0.0.1:8080/dashboard')
+            webview.create_window('Gemini Privacy Shield', f'http://127.0.0.1:{constants.PORT}/dashboard')
             webview.start()
         except Exception as e:
             print(f"GUI failed to start: {e}. Falling back to server only.")
